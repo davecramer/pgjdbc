@@ -38,6 +38,8 @@ import org.postgresql.util.PGBinaryObject;
 import org.postgresql.util.PGobject;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.PSQLState;
+import org.postgresql.util.internal.LeakTracker;
+import org.postgresql.util.internal.LeakTracker.LeakTraceHandle;
 import org.postgresql.xml.DefaultPGXmlFactoryFactory;
 import org.postgresql.xml.LegacyInsecurePGXmlFactoryFactory;
 import org.postgresql.xml.PGXmlFactoryFactory;
@@ -79,15 +81,54 @@ import java.util.StringTokenizer;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class PgConnection implements BaseConnection {
 
+  /**
+   * Called if PgConnection instance has been leaked. Maintains independent references to the
+   * {@link QueryExecutor} and {@code cancelTimerRef} to allow closing those resources without
+   * maintaining a strong reference to {@code PgConnection}.
+   */
+  private static final class LeakConsumer implements Consumer<LeakTraceHandle<Object>> {
+    private final QueryExecutor queryExecutor;
+    private final AtomicReference<Timer> cancelTimerRef;
+    private final @Nullable Throwable openStackTrace;
+
+    LeakConsumer(QueryExecutor queryExecutor, AtomicReference<Timer> cancelTimerRef, Throwable openStackTrace) {
+      this.queryExecutor = queryExecutor;
+      this.cancelTimerRef = cancelTimerRef;
+      this.openStackTrace = openStackTrace;
+    }
+
+    @Override
+    public void accept(LeakTraceHandle<Object> t) {
+      if (openStackTrace != null) {
+        LOGGER.log(Level.WARNING, GT.tr("Finalizing a Connection that was never closed:"), openStackTrace);
+      }
+      Timer cancelTimer = cancelTimerRef.get();
+      if (cancelTimer != null) {
+        cancelTimerRef.set(null);
+        Driver.getSharedTimer().releaseTimer();
+      }
+      queryExecutor.close();
+    }
+
+  }
+
   private static final Logger LOGGER = Logger.getLogger(PgConnection.class.getName());
   private static final Set<Integer> SUPPORTED_BINARY_OIDS = getSupportedBinaryOids();
   private static final SQLPermission SQL_PERMISSION_ABORT = new SQLPermission("callAbort");
   private static final SQLPermission SQL_PERMISSION_NETWORK_TIMEOUT = new SQLPermission("setNetworkTimeout");
+
+  /**
+   * Manages tracking leaks of {@code PgConnection} objects through the {@code PgConnection.leakMarker}
+   * reference.
+   */
+  private static final LeakTracker<Object> LEAK_TRACKER = new LeakTracker<>();
 
   private enum ReadOnlyBehavior {
     ignore,
@@ -105,7 +146,15 @@ public class PgConnection implements BaseConnection {
 
   private final ReadOnlyBehavior readOnlyBehavior;
 
-  private @Nullable Throwable openStackTrace;
+  /**
+   * The sole purpose of leakMarker field is to have a minimal object.
+   * That will become ureachable as soon as the connection itself becomes unreachable.
+   * In practice {@code PhantomReference<PgConnection>} would be good enough,
+   * however, {@code OpenJdk <= 8} keeps the referrent longer than needed,
+   * so we add a dummy object to workaround
+   * <a href="https://bugs.openjdk.java.net/browse/JDK-8071507">JDK-8071507</a>.
+   */
+  private @Nullable Object leakMarker;
 
   /* Actual network handler */
   private final QueryExecutor queryExecutor;
@@ -153,8 +202,10 @@ public class PgConnection implements BaseConnection {
   private @Nullable SQLWarning firstWarning;
 
   // Timer for scheduling TimerTasks for this connection.
-  // Only instantiated if a task is actually scheduled.
-  private volatile @Nullable Timer cancelTimer;
+  // Only populated if a task is actually scheduled.
+  private final AtomicReference<Timer> cancelTimerRef = new AtomicReference<>();
+
+  private @Nullable LeakTraceHandle<Object> toUnregisterAtClose;
 
   private @Nullable PreparedStatement checkConnectionQuery;
   /**
@@ -294,9 +345,14 @@ public class PgConnection implements BaseConnection {
     typeCache = createTypeInfo(this, unknownLength);
     initObjectTypes(info);
 
+    Throwable openStackTrace = null;
     if (PGProperty.LOG_UNCLOSED_CONNECTIONS.getBoolean(info)) {
       openStackTrace = new Throwable("Connection was created at this point:");
     }
+    LEAK_TRACKER.processReferences();
+    this.leakMarker = new Object();
+    toUnregisterAtClose = LEAK_TRACKER.register(this.leakMarker, new LeakConsumer(queryExecutor, cancelTimerRef, openStackTrace));
+
     this.logServerErrorDetail = PGProperty.LOG_SERVER_ERROR_DETAIL.getBoolean(info);
     this.disableColumnSanitiser = PGProperty.DISABLE_COLUMN_SANITISER.getBoolean(info);
 
@@ -322,6 +378,8 @@ public class PgConnection implements BaseConnection {
     replicationConnection = PGProperty.REPLICATION.get(info) != null;
 
     xmlFactoryFactoryClass = PGProperty.XML_FACTORY_FACTORY.get(info);
+
+
   }
 
   private static ReadOnlyBehavior getReadOnlyBehavior(String property) {
@@ -737,17 +795,14 @@ public class PgConnection implements BaseConnection {
    */
   @Override
   public void close() throws SQLException {
-    if (queryExecutor == null) {
-      // This might happen in case constructor throws an exception (e.g. host being not available).
-      // When that happens the connection is still registered in the finalizer queue, so it gets finalized
-      return;
-    }
     if (queryExecutor.isClosed()) {
       return;
     }
     releaseTimer();
     queryExecutor.close();
-    openStackTrace = null;
+    leakMarker = null;
+    LEAK_TRACKER.unregister(toUnregisterAtClose);
+    toUnregisterAtClose = null;
   }
 
   @Override
@@ -989,25 +1044,6 @@ public class PgConnection implements BaseConnection {
   }
 
   /**
-   * <p>Overrides finalize(). If called, it closes the connection.</p>
-   *
-   * <p>This was done at the request of <a href="mailto:rachel@enlarion.demon.co.uk">Rachel
-   * Greenham</a> who hit a problem where multiple clients didn't close the connection, and once a
-   * fortnight enough clients were open to kill the postgres server.</p>
-   */
-  protected void finalize() throws Throwable {
-    try {
-      if (openStackTrace != null) {
-        LOGGER.log(Level.WARNING, GT.tr("Finalizing a Connection that was never closed:"), openStackTrace);
-      }
-
-      close();
-    } finally {
-      super.finalize();
-    }
-  }
-
-  /**
    * Get server version number.
    *
    * @return server version number
@@ -1219,15 +1255,18 @@ public class PgConnection implements BaseConnection {
   }
 
   private synchronized Timer getTimer() {
+    Timer cancelTimer = cancelTimerRef.get();
     if (cancelTimer == null) {
       cancelTimer = Driver.getSharedTimer().getTimer();
+      cancelTimerRef.set(cancelTimer);
     }
     return cancelTimer;
   }
 
   private synchronized void releaseTimer() {
+    Timer cancelTimer = cancelTimerRef.get();
     if (cancelTimer != null) {
-      cancelTimer = null;
+      cancelTimerRef.set(null);
       Driver.getSharedTimer().releaseTimer();
     }
   }
@@ -1240,7 +1279,7 @@ public class PgConnection implements BaseConnection {
 
   @Override
   public void purgeTimerTasks() {
-    Timer timer = cancelTimer;
+    Timer timer = cancelTimerRef.get();
     if (timer != null) {
       timer.purge();
     }
