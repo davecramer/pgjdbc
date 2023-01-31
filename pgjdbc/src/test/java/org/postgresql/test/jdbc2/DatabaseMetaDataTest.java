@@ -64,8 +64,8 @@ public class DatabaseMetaDataTest {
   public static Iterable<Object[]> data() {
     Collection<Object[]> ids = new ArrayList<>();
     for (BinaryMode binaryMode : BinaryMode.values()) {
-      ids.add(new Object[]{binaryMode,true});
-      ids.add(new Object[]{binaryMode,false});
+      ids.add(new Object[]{binaryMode, true});
+      ids.add(new Object[]{binaryMode, false});
     }
     return ids;
   }
@@ -74,8 +74,8 @@ public class DatabaseMetaDataTest {
   @Before
   public void setUp() throws Exception {
     final Properties props = new Properties();
-    if(this.sqlTypesWithTimezone){
-      PGProperty.SQL_TYPES_WITH_TIMEZONE.set(props,true);
+    if (this.sqlTypesWithTimezone) {
+      PGProperty.SQL_TYPES_WITH_TIMEZONE.set(props, true);
     }
     if (binaryMode == BinaryMode.FORCE) {
       PGProperty.PREPARE_THRESHOLD.set(props, -1);
@@ -271,12 +271,12 @@ public class DatabaseMetaDataTest {
     assertEquals("metadatatest", tableName);
     String tableType = rs.getString("TABLE_TYPE");
     assertEquals("TABLE", tableType);
-    assertEquals(5, rs.findColumn("REMARKS"));
-    assertEquals(6, rs.findColumn("TYPE_CAT"));
-    assertEquals(7, rs.findColumn("TYPE_SCHEM"));
-    assertEquals(8, rs.findColumn("TYPE_NAME"));
-    assertEquals(9, rs.findColumn("SELF_REFERENCING_COL_NAME"));
-    assertEquals(10, rs.findColumn("REF_GENERATION"));
+    assertEquals(rs.findColumn("REMARKS"), 5);
+    assertEquals(rs.findColumn("TYPE_CAT"), 6);
+    assertEquals(rs.findColumn("TYPE_SCHEM"), 7);
+    assertEquals(rs.findColumn("TYPE_NAME"), 8);
+    assertEquals(rs.findColumn("SELF_REFERENCING_COL_NAME"), 9);
+    assertEquals(rs.findColumn("REF_GENERATION"), 10);
 
     // There should only be one row returned
     assertFalse(rs.next(), "getTables() returned too many rows");
@@ -297,18 +297,18 @@ public class DatabaseMetaDataTest {
     assertTrue(rs.next());
     assertEquals("metadatatest", rs.getString("TABLE_NAME"));
     assertEquals("updated", rs.getString("COLUMN_NAME"));
-    if(sqlTypesWithTimezone){
+    if (sqlTypesWithTimezone) {
       assertEquals(Types.TIMESTAMP_WITH_TIMEZONE, rs.getInt("DATA_TYPE"));
-    }else {
+    } else {
       assertEquals(java.sql.Types.TIMESTAMP, rs.getInt("DATA_TYPE"));
     }
 
     assertTrue(rs.next());
     assertEquals("metadatatest", rs.getString("TABLE_NAME"));
     assertEquals("updated_time", rs.getString("COLUMN_NAME"));
-    if(sqlTypesWithTimezone){
+    if (sqlTypesWithTimezone) {
       assertEquals(Types.TIME_WITH_TIMEZONE, rs.getInt("DATA_TYPE"));
-    }else {
+    } else {
       assertEquals(java.sql.Types.TIME, rs.getInt("DATA_TYPE"));
     }
   }
@@ -1059,18 +1059,18 @@ public class DatabaseMetaDataTest {
     assertTrue(rs.next());
     assertEquals("c", rs.getString(4));
     assertEquals(DatabaseMetaData.procedureColumnOut, rs.getInt(5));
-    if(sqlTypesWithTimezone){
+    if (sqlTypesWithTimezone) {
       assertEquals(Types.TIMESTAMP_WITH_TIMEZONE, rs.getInt(6));
-    }else {
+    } else {
       assertEquals(Types.TIMESTAMP, rs.getInt(6));
     }
 
     assertTrue(rs.next());
     assertEquals("d", rs.getString(4));
     assertEquals(DatabaseMetaData.procedureColumnOut, rs.getInt(5));
-    if(sqlTypesWithTimezone){
+    if (sqlTypesWithTimezone) {
       assertEquals(Types.TIME_WITH_TIMEZONE, rs.getInt(6));
-    }else {
+    } else {
       assertEquals(Types.TIME, rs.getInt(6));
     }
 
@@ -1103,18 +1103,18 @@ public class DatabaseMetaDataTest {
     assertTrue(rs.next());
     assertEquals("updated", rs.getString(4));
     assertEquals(DatabaseMetaData.procedureColumnResult, rs.getInt(5));
-    if(sqlTypesWithTimezone){
+    if (sqlTypesWithTimezone) {
       assertEquals(Types.TIMESTAMP_WITH_TIMEZONE, rs.getInt(6));
-    }else {
+    } else {
       assertEquals(Types.TIMESTAMP, rs.getInt(6));
     }
 
     assertTrue(rs.next());
     assertEquals("updated_time", rs.getString(4));
     assertEquals(DatabaseMetaData.procedureColumnResult, rs.getInt(5));
-    if(sqlTypesWithTimezone){
+    if (sqlTypesWithTimezone) {
       assertEquals(Types.TIME_WITH_TIMEZONE, rs.getInt(6));
-    }else {
+    } else {
       assertEquals(Types.TIME, rs.getInt(6));
     }
 
