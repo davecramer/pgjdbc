@@ -20,7 +20,6 @@ import org.postgresql.core.ServerVersion;
 import org.postgresql.test.TestUtil;
 import org.postgresql.test.jdbc2.BaseTest4.BinaryMode;
 
-import org.junit.Before;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,11 +50,19 @@ import java.util.Set;
  */
 public class DatabaseMetaDataTest {
   private Connection con;
+  private BinaryMode binaryMode;
+  private boolean sqlTypesWithTimezone;
 
-  private final BinaryMode binaryMode;
-  private final boolean sqlTypesWithTimezone;
+  public void initDatabaseMetaDataTest(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    final Properties props = new Properties();
+    if (sqlTypesWithTimezone) {
+      PGProperty.SQL_TYPES_WITH_TIMEZONE.set(props, true);
+    }
+    if (binaryMode == BinaryMode.FORCE) {
+      PGProperty.PREPARE_THRESHOLD.set(props, -1);
+    }
+    con = TestUtil.openDB(props);
 
-  public DatabaseMetaDataTest(BinaryMode binaryMode, boolean sqlTypesWithTimezone) {
     this.binaryMode = binaryMode;
     this.sqlTypesWithTimezone = sqlTypesWithTimezone;
   }
@@ -70,83 +77,79 @@ public class DatabaseMetaDataTest {
     return ids;
   }
 
-
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     final Properties props = new Properties();
-    if (this.sqlTypesWithTimezone) {
-      PGProperty.SQL_TYPES_WITH_TIMEZONE.set(props, true);
-    }
-    if (binaryMode == BinaryMode.FORCE) {
-      PGProperty.PREPARE_THRESHOLD.set(props, -1);
-      con = TestUtil.openDB(props);
-    } else {
-      con = TestUtil.openDB(props);
-    }
-    TestUtil.createTable(con, "metadatatest",
-        "id int4, name text, updated timestamptz, updated_time timetz, colour text, quest text");
-    TestUtil.createTable(con, "precision_test", "implicit_precision numeric");
-    TestUtil.dropSequence(con, "sercoltest_b_seq");
-    TestUtil.dropSequence(con, "sercoltest_c_seq");
-    TestUtil.createTable(con, "sercoltest", "a int, b serial, c bigserial");
-    TestUtil.createTable(con, "\"a\\\"", "a int4");
-    TestUtil.createTable(con, "\"a'\"", "a int4");
-    TestUtil.createTable(con, "arraytable", "a numeric(5,2)[], b varchar(100)[]");
-    TestUtil.createTable(con, "intarraytable", "a int4[], b int4[][]");
-    TestUtil.createView(con, "viewtest", "SELECT id, quest FROM metadatatest");
-    TestUtil.dropType(con, "custom");
-    TestUtil.dropType(con, "_custom");
-    TestUtil.createCompositeType(con, "custom", "i int", false);
-    TestUtil.createCompositeType(con, "_custom", "f float", false);
+    try (Connection con1 = TestUtil.openDB(props)) {
+      TestUtil.createTable(con1, "metadatatest",
+          "id int4, name text, updated timestamptz, updated_time timetz, colour text, quest text");
+      TestUtil.createTable(con1, "precision_test", "implicit_precision numeric");
+      TestUtil.dropSequence(con1, "sercoltest_b_seq");
+      TestUtil.dropSequence(con1, "sercoltest_c_seq");
+      TestUtil.createTable(con1, "sercoltest", "a int, b serial, c bigserial");
+      TestUtil.createTable(con1, "\"a\\\"", "a int4");
+      TestUtil.createTable(con1, "\"a'\"", "a int4");
+      TestUtil.createTable(con1, "arraytable", "a numeric(5,2)[], b varchar(100)[]");
+      TestUtil.createTable(con1, "intarraytable", "a int4[], b int4[][]");
+      TestUtil.createView(con1, "viewtest", "SELECT id, quest FROM metadatatest");
+      TestUtil.dropType(con1, "custom");
+      TestUtil.dropType(con1, "_custom");
+      TestUtil.createCompositeType(con1, "custom", "i int", false);
+      TestUtil.createCompositeType(con1, "_custom", "f float", false);
 
-    // create a table and multiple comments on it
-    TestUtil.createTable(con, "duplicate", "x text");
-    TestUtil.execute(con, "comment on table duplicate is 'duplicate table'");
-    TestUtil.execute(con, "create or replace function bar() returns integer language sql as $$ select 1 $$");
-    TestUtil.execute(con, "comment on function bar() is 'bar function'");
-    try (Connection conPriv = TestUtil.openPrivilegedDB()) {
-      TestUtil.execute(conPriv, "update pg_description set objoid = 'duplicate'::regclass where objoid = 'bar'::regproc");
-    }
+      // create a table and multiple comments on it
+      TestUtil.createTable(con1, "duplicate", "x text");
+      TestUtil.execute(con1, "comment on table duplicate is 'duplicate table'");
+      TestUtil.execute(con1,
+          "create or replace function bar() returns integer language sql as $$ select 1 $$");
+      TestUtil.execute(con1, "comment on function bar() is 'bar function'");
+      try (Connection conPriv = TestUtil.openPrivilegedDB()) {
+        TestUtil.execute(conPriv,
+            "update pg_description set objoid = 'duplicate'::regclass where objoid = 'bar'::regproc");
+      }
 
-    // 8.2 does not support arrays of composite types
-    TestUtil.createTable(con, "customtable", "c1 custom, c2 _custom"
-        + (TestUtil.haveMinimumServerVersion(con, ServerVersion.v8_3) ? ", c3 custom[], c4 _custom[]" : ""));
+      // 8.2 does not support arrays of composite types
+      TestUtil.createTable(con1, "customtable", "c1 custom, c2 _custom"
+          + (TestUtil.haveMinimumServerVersion(con1, ServerVersion.v8_3)
+          ? ", c3 custom[], c4 _custom[]" : ""));
 
-    Statement stmt = con.createStatement();
-    // we add the following comments to ensure the joins to the comments
-    // are done correctly. This ensures we correctly test that case.
-    stmt.execute("comment on table metadatatest is 'this is a table comment'");
-    stmt.execute("comment on column metadatatest.id is 'this is a column comment'");
+      Statement stmt = con1.createStatement();
+      // we add the following comments to ensure the joins to the comments
+      // are done correctly. This ensures we correctly test that case.
+      stmt.execute("comment on table metadatatest is 'this is a table comment'");
+      stmt.execute("comment on column metadatatest.id is 'this is a column comment'");
 
-    stmt.execute(
-        "CREATE OR REPLACE FUNCTION f1(int, varchar) RETURNS int AS 'SELECT 1;' LANGUAGE SQL");
-    stmt.execute(
-        "CREATE OR REPLACE FUNCTION f2(a int, b varchar) RETURNS int AS 'SELECT 1;' LANGUAGE SQL");
-    stmt.execute(
-        "CREATE OR REPLACE FUNCTION f3(IN a int, INOUT b varchar, OUT c timestamptz, OUT d timetz) AS $f$ BEGIN b := 'a'; c := now(); d := CURRENT_TIME return; END; $f$ LANGUAGE plpgsql");
-    stmt.execute(
-        "CREATE OR REPLACE FUNCTION f4(int) RETURNS metadatatest AS 'SELECT 1, ''a''::text, now(), CURRENT_TIME, ''c''::text, ''q''::text' LANGUAGE SQL");
-    if (TestUtil.haveMinimumServerVersion(con, ServerVersion.v8_4)) {
-      // RETURNS TABLE requires PostgreSQL 8.4+
       stmt.execute(
-          "CREATE OR REPLACE FUNCTION f5() RETURNS TABLE (i int) LANGUAGE sql AS 'SELECT 1'");
-    }
+          "CREATE OR REPLACE FUNCTION f1(int, varchar) RETURNS int AS 'SELECT 1;' LANGUAGE SQL");
+      stmt.execute(
+          "CREATE OR REPLACE FUNCTION f2(a int, b varchar) RETURNS int AS 'SELECT 1;' LANGUAGE SQL");
+      stmt.execute(
+          "CREATE OR REPLACE FUNCTION f3(IN a int, INOUT b varchar, OUT c timestamptz, OUT d timetz) AS $f$ BEGIN b := 'a'; c := now(); d := CURRENT_TIME return; END; $f$ LANGUAGE plpgsql");
+      stmt.execute(
+          "CREATE OR REPLACE FUNCTION f4(int) RETURNS metadatatest AS 'SELECT 1, ''a''::text, now(), CURRENT_TIME, ''c''::text, ''q''::text' LANGUAGE SQL");
+      if (TestUtil.haveMinimumServerVersion(con1, ServerVersion.v8_4)) {
+        // RETURNS TABLE requires PostgreSQL 8.4+
+        stmt.execute(
+            "CREATE OR REPLACE FUNCTION f5() RETURNS TABLE (i int) LANGUAGE sql AS 'SELECT 1'");
+      }
 
-    // create a custom `&` operator, which caused failure with `&` usage in getIndexInfo()
-    stmt.execute(
-        "CREATE OR REPLACE FUNCTION f6(numeric, integer) returns integer as 'BEGIN return $1::integer & $2;END;' language plpgsql immutable;");
-    stmt.execute("DROP OPERATOR IF EXISTS & (numeric, integer)");
-    stmt.execute("CREATE OPERATOR & (LEFTARG = numeric, RIGHTARG = integer, PROCEDURE = f6)");
+      // create a custom `&` operator, which caused failure with `&` usage in getIndexInfo()
+      stmt.execute(
+          "CREATE OR REPLACE FUNCTION f6(numeric, integer) returns integer as 'BEGIN return $1::integer & $2;END;' language plpgsql immutable;");
+      stmt.execute("DROP OPERATOR IF EXISTS & (numeric, integer)");
+      stmt.execute("CREATE OPERATOR & (LEFTARG = numeric, RIGHTARG = integer, PROCEDURE = f6)");
 
-    TestUtil.createDomain(con, "nndom", "int not null");
-    TestUtil.createDomain(con, "varbit2", "varbit(3)");
-    TestUtil.createDomain(con, "float83", "numeric(8,3)");
+      TestUtil.createDomain(con1, "nndom", "int not null");
+      TestUtil.createDomain(con1, "varbit2", "varbit(3)");
+      TestUtil.createDomain(con1, "float83", "numeric(8,3)");
 
-    TestUtil.createTable(con, "domaintable", "id nndom, v varbit2, f float83");
-    stmt.close();
+      TestUtil.createTable(con1, "domaintable", "id nndom, v varbit2, f float83");
+      stmt.close();
 
-    if ( TestUtil.haveMinimumServerVersion(con, ServerVersion.v12) ) {
-      TestUtil.createTable(con, "employee", "id int GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, hours_per_week decimal(3,2), rate_per_hour decimal(3,2), gross_pay decimal GENERATED ALWAYS AS (hours_per_week * rate_per_hour) STORED");
+      if (TestUtil.haveMinimumServerVersion(con1, ServerVersion.v12)) {
+        TestUtil.createTable(con1, "employee",
+            "id int GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, hours_per_week decimal(3,2), rate_per_hour decimal(3,2), gross_pay decimal GENERATED ALWAYS AS (hours_per_week * rate_per_hour) STORED");
+      }
     }
   }
 
@@ -191,9 +194,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void arrayTypeInfo(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void arrayTypeInfo(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getColumns(null, null, "intarraytable", "a");
     assertTrue(rs.next());
@@ -207,9 +210,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void arrayInt4DoubleDim(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void arrayInt4DoubleDim(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getColumns(null, null, "intarraytable", "b");
     assertTrue(rs.next());
@@ -221,9 +224,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void customArrayTypeInfo(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void customArrayTypeInfo(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet res = dbmd.getColumns(null, null, "customtable", null);
     assertTrue(res.next());
@@ -259,9 +262,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void tables(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void tables(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
 
@@ -314,9 +317,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void crossReference(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void crossReference(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Connection con1 = TestUtil.openDB();
 
     TestUtil.createTable(con1, "vv", "a int not null, b int not null, constraint vv_pkey primary key ( a, b )");
@@ -364,9 +367,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void foreignKeyActions(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void foreignKeyActions(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Connection conn = TestUtil.openDB();
     TestUtil.createTable(conn, "pkt", "id int primary key");
     TestUtil.createTable(conn, "fkt1",
@@ -394,9 +397,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void foreignKeysToUniqueIndexes(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void foreignKeysToUniqueIndexes(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Connection con1 = TestUtil.openDB();
     TestUtil.createTable(con1, "pkt",
         "a int not null, b int not null, CONSTRAINT pkt_pk_a PRIMARY KEY (a), CONSTRAINT pkt_un_b UNIQUE (b)");
@@ -420,9 +423,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void multiColumnForeignKeys(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void multiColumnForeignKeys(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Connection con1 = TestUtil.openDB();
     TestUtil.createTable(con1, "pkt",
         "a int not null, b int not null, CONSTRAINT pkt_pk PRIMARY KEY (a,b)");
@@ -452,9 +455,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void sameTableForeignKeys(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void sameTableForeignKeys(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Connection con1 = TestUtil.openDB();
 
     TestUtil.createTable(con1, "person",
@@ -517,9 +520,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void foreignKeys(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void foreignKeys(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Connection con1 = TestUtil.openDB();
     TestUtil.createTable(con1, "people", "id int4 primary key, name text");
     TestUtil.createTable(con1, "policy", "id int4 primary key, name text");
@@ -578,9 +581,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void numericPrecision(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void numericPrecision(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
     ResultSet rs = dbmd.getColumns(null, "public", "precision_test", "%");
@@ -590,9 +593,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void columns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void columns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     // At the moment just test that no exceptions are thrown KJ
     String [] metadataColumns = {"TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME",
                                  "DATA_TYPE", "TYPE_NAME", "COLUMN_SIZE", "BUFFER_LENGTH",
@@ -613,9 +616,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void droppedColumns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void droppedColumns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     if (!TestUtil.haveMinimumServerVersion(con, ServerVersion.v8_4)) {
       return;
     }
@@ -669,9 +672,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void serialColumns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void serialColumns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getColumns(null, null, "sercoltest", null);
     int rownum = 0;
@@ -696,9 +699,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void columnPrivileges(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void columnPrivileges(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     // At the moment just test that no exceptions are thrown KJ
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
@@ -732,23 +735,23 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void tablePrivileges(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void tablePrivileges(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     relationPrivilegesHelper("metadatatest");
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void viewPrivileges(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void viewPrivileges(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     relationPrivilegesHelper("viewtest");
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void materializedViewPrivileges(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void materializedViewPrivileges(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Assumptions.assumeTrue(TestUtil.haveMinimumServerVersion(con, ServerVersion.v9_3));
     TestUtil.createMaterializedView(con, "matviewtest", "SELECT id, quest FROM metadatatest");
     try {
@@ -759,9 +762,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void noTablePrivileges(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void noTablePrivileges(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Statement stmt = con.createStatement();
     stmt.execute("REVOKE ALL ON metadatatest FROM PUBLIC");
     stmt.execute("REVOKE ALL ON metadatatest FROM " + TestUtil.getUser());
@@ -771,9 +774,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void primaryKeys(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void primaryKeys(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     // At the moment just test that no exceptions are thrown KJ
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
@@ -782,9 +785,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void indexInfo(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void indexInfo(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Statement stmt = con.createStatement();
     stmt.execute("create index idx_id on metadatatest (id)");
     stmt.execute("create index idx_func_single on metadatatest (upper(colour))");
@@ -843,9 +846,9 @@ public class DatabaseMetaDataTest {
    * https://docs.oracle.com/javase/8/docs/api/java/sql/DatabaseMetaData.html#getIndexInfo-java.lang.String-java.lang.String-java.lang.String-boolean-boolean-
    */
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void indexInfoColumnOrder(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void indexInfoColumnOrder(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
     ResultSet rs = dbmd.getIndexInfo(null, null, "metadatatest", false, false);
@@ -867,9 +870,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void indexInfoColumnCase(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void indexInfoColumnCase(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
 
@@ -887,9 +890,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void notNullDomainColumn(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void notNullDomainColumn(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getColumns("", "", "domaintable", "");
     assertTrue(rs.next());
@@ -901,9 +904,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void domainColumnSize(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void domainColumnSize(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getColumns("", "", "domaintable", "");
     assertTrue(rs.next());
@@ -920,9 +923,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void ascDescIndexInfo(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void ascDescIndexInfo(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     if (!TestUtil.haveMinimumServerVersion(con, ServerVersion.v8_3)) {
       return;
     }
@@ -946,9 +949,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void partialIndexInfo(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void partialIndexInfo(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Statement stmt = con.createStatement();
     stmt.execute("create index idx_p_name_id on metadatatest (name) where id > 5");
     stmt.close();
@@ -967,9 +970,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void tableTypes(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void tableTypes(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     final List<String> expectedTableTypes = new ArrayList<>(Arrays.asList("FOREIGN TABLE", "INDEX", "PARTITIONED INDEX",
         "MATERIALIZED VIEW", "PARTITIONED TABLE", "SEQUENCE", "SYSTEM INDEX", "SYSTEM TABLE", "SYSTEM TOAST INDEX",
         "SYSTEM TOAST TABLE", "SYSTEM VIEW", "TABLE", "TEMPORARY INDEX", "TEMPORARY SEQUENCE", "TEMPORARY TABLE",
@@ -993,9 +996,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void funcWithoutNames(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void funcWithoutNames(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
     ResultSet rs = dbmd.getProcedureColumns(null, null, "f1", null);
@@ -1020,9 +1023,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void funcWithNames(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void funcWithNames(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getProcedureColumns(null, null, "f2", null);
 
@@ -1040,9 +1043,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void funcWithDirection(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void funcWithDirection(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getProcedureColumns(null, null, "f3", null);
 
@@ -1073,15 +1076,13 @@ public class DatabaseMetaDataTest {
     } else {
       assertEquals(Types.TIME, rs.getInt(6));
     }
-
-
     rs.close();
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void funcReturningComposite(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void funcReturningComposite(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getProcedureColumns(null, null, "f4", null);
 
@@ -1133,9 +1134,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void funcReturningTable(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void funcReturningTable(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     if (!TestUtil.haveMinimumServerVersion(con, ServerVersion.v8_4)) {
       return;
     }
@@ -1154,9 +1155,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void versionColumns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void versionColumns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     // At the moment just test that no exceptions are thrown KJ
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
@@ -1165,9 +1166,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void bestRowIdentifier(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void bestRowIdentifier(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     // At the moment just test that no exceptions are thrown KJ
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
@@ -1177,9 +1178,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void procedures(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void procedures(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     // At the moment just test that no exceptions are thrown KJ
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
@@ -1188,9 +1189,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void catalogs(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void catalogs(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     try (ResultSet rs = dbmd.getCatalogs()) {
       List<String> catalogs = new ArrayList<>();
@@ -1212,9 +1213,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void schemas(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void schemas(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     assertNotNull(dbmd);
 
@@ -1242,9 +1243,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void escaping(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void escaping(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getTables(null, null, "a'", new String[]{"TABLE"});
     assertTrue(rs.next());
@@ -1255,9 +1256,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void searchStringEscape(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void searchStringEscape(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     String pattern = dbmd.getSearchStringEscape() + "_";
     PreparedStatement pstmt = con.prepareStatement("SELECT 'a' LIKE ?, '_' LIKE ?");
@@ -1272,9 +1273,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void getUDTQualified(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void getUDTQualified(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Statement stmt = null;
     try {
       stmt = con.createStatement();
@@ -1328,9 +1329,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void getUDT1(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void getUDT1(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     try {
       Statement stmt = con.createStatement();
       stmt.execute("create domain testint8 as int8");
@@ -1361,9 +1362,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void getUDT2(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void getUDT2(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     try {
       Statement stmt = con.createStatement();
       stmt.execute("create domain testint8 as int8");
@@ -1395,9 +1396,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void getUDT3(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void getUDT3(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     try {
       Statement stmt = con.createStatement();
       stmt.execute("create domain testint8 as int8");
@@ -1428,9 +1429,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void getUDT4(BinaryMode binaryMode) throws Exception {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void getUDT4(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws Exception {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     try {
       Statement stmt = con.createStatement();
       stmt.execute("create type testint8 as (i int8)");
@@ -1459,9 +1460,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void types(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void types(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     // https://www.postgresql.org/docs/8.2/static/datatype.html
     List<String> stringTypeList = new ArrayList<>();
     stringTypeList.addAll(Arrays.asList("bit",
@@ -1522,9 +1523,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void typeInfoSigned(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void typeInfoSigned(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getTypeInfo();
     while (rs.next()) {
@@ -1539,9 +1540,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void typeInfoQuoting(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void typeInfoQuoting(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getTypeInfo();
     while (rs.next()) {
@@ -1555,9 +1556,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void informationAboutArrayTypes(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void informationAboutArrayTypes(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     ResultSet rs = dbmd.getColumns("", "", "arraytable", "");
     assertTrue(rs.next());
@@ -1571,9 +1572,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void partitionedTablesIndex(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void partitionedTablesIndex(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     if (TestUtil.haveMinimumServerVersion(con, ServerVersion.v11)) {
       Statement stmt = null;
       try {
@@ -1596,9 +1597,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void partitionedTables(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void partitionedTables(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     if (TestUtil.haveMinimumServerVersion(con, ServerVersion.v11)) {
       Statement stmt = null;
       try {
@@ -1624,9 +1625,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void identityColumns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void identityColumns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     if ( TestUtil.haveMinimumServerVersion(con, ServerVersion.v10) ) {
       Statement stmt = null;
       try {
@@ -1650,9 +1651,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void generatedColumns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void generatedColumns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     if ( TestUtil.haveMinimumServerVersion(con, ServerVersion.v12) ) {
       DatabaseMetaData dbmd = con.getMetaData();
       ResultSet rs = dbmd.getColumns("", "", "employee", "gross_pay");
@@ -1663,9 +1664,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void getSQLKeywords(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void getSQLKeywords(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     DatabaseMetaData dbmd = con.getMetaData();
     String keywords = dbmd.getSQLKeywords();
 
@@ -1735,9 +1736,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void functionColumns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void functionColumns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     if (!TestUtil.haveMinimumServerVersion(con, ServerVersion.v8_4)) {
       return;
     }
@@ -1801,9 +1802,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void smallSerialColumns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void smallSerialColumns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Assumptions.assumeTrue(TestUtil.haveMinimumServerVersion(con, ServerVersion.v9_2));
     TestUtil.createTable(con, "smallserial_test", "a smallserial");
 
@@ -1823,9 +1824,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void smallSerialSequenceLikeColumns(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void smallSerialSequenceLikeColumns(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     Statement stmt = con.createStatement();
     // This is the equivalent of the smallserial, not the actual smallserial
     stmt.execute("CREATE SEQUENCE smallserial_test_a_seq;\n"
@@ -1856,9 +1857,9 @@ public class DatabaseMetaDataTest {
   }
 
   @MethodSource("data")
-  @ParameterizedTest(name = "binary = {0}")
-  void upperCaseMetaDataLabels(BinaryMode binaryMode) throws SQLException {
-    initDatabaseMetaDataTest(binaryMode);
+  @ParameterizedTest(name = "binary = {0} sqlType =  {1}")
+  void upperCaseMetaDataLabels(BinaryMode binaryMode, boolean sqlTypesWithTimezone) throws SQLException {
+    initDatabaseMetaDataTest(binaryMode, sqlTypesWithTimezone);
     ResultSet rs = con.getMetaData().getTables(null, null, null, null);
     ResultSetMetaData rsmd = rs.getMetaData();
 
