@@ -53,7 +53,6 @@ import org.postgresql.xml.DefaultPGXmlFactoryFactory;
 import org.postgresql.xml.LegacyInsecurePGXmlFactoryFactory;
 import org.postgresql.xml.PGXmlFactoryFactory;
 
-import org.checkerframework.checker.initialization.qual.UnderInitialization;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.checkerframework.dataflow.qual.Pure;
