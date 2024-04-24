@@ -53,6 +53,7 @@ import org.postgresql.xml.DefaultPGXmlFactoryFactory;
 import org.postgresql.xml.LegacyInsecurePGXmlFactoryFactory;
 import org.postgresql.xml.PGXmlFactoryFactory;
 
+import org.checkerframework.checker.initialization.qual.UnderInitialization;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.checkerframework.dataflow.qual.Pure;
@@ -349,7 +350,9 @@ public class PgConnection implements BaseConnection {
     boolean sqlTypesWithTimezone = PGProperty.SQL_TYPES_WITH_TIMEZONE.getBoolean(info);
 
     // Initialize object handling
-    typeCache = createTypeInfo(this, unknownLength,sqlTypesWithTimezone);
+@SuppressWarnings("argument")
+    TypeInfo typeCache = createTypeInfo(this, unknownLength,sqlTypesWithTimezone);
+    this.typeCache = typeCache;
     initObjectTypes(info);
 
     if (PGProperty.LOG_UNCLOSED_CONNECTIONS.getBoolean(info)) {

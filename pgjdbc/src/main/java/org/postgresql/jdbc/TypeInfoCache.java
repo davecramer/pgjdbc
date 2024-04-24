@@ -161,7 +161,7 @@ public class TypeInfoCache implements TypeInfo {
     TYPE_ALIASES.put("timestamptz", "timestamptz");
   }
 
-  @SuppressWarnings("method.invocation.invalid")
+  @SuppressWarnings("method.invocation")
   public TypeInfoCache(BaseConnection conn, int unknownLength,boolean sqlTypeWithTimezone) {
     this.conn = conn;
     this.unknownLength = unknownLength;
