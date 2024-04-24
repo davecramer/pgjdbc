@@ -349,7 +349,7 @@ public class PgConnection implements BaseConnection {
     boolean sqlTypesWithTimezone = PGProperty.SQL_TYPES_WITH_TIMEZONE.getBoolean(info);
 
     // Initialize object handling
-@SuppressWarnings("argument")
+    @SuppressWarnings("argument")
     TypeInfo typeCache = createTypeInfo(this, unknownLength,sqlTypesWithTimezone);
     this.typeCache = typeCache;
     initObjectTypes(info);
