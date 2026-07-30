@@ -20,7 +20,7 @@ if (!project.hasProperty("skipErrorprone")) {
     tasks.configureEach<JavaCompile> {
         if ("Test" in name) {
             // Ignore warnings in test code
-            options.errorprone.isEnabled.set(false)
+            options.errorprone.enabled.set(false)
         } else {
             options.compilerArgs.addAll(listOf("-Xmaxerrs", "10000", "-Xmaxwarns", "10000"))
             if (buildParameters.buildJdkVersion == 21) {
@@ -31,11 +31,9 @@ if (!project.hasProperty("skipErrorprone")) {
                 disableWarningsInGeneratedCode.set(true)
                 errorproneArgs.add("-XepExcludedPaths:.*/translation/messages_.*.java")
                 error(
+                    "MethodCanBeStatic",
                     "PackageLocation",
                     "UnusedVariable",
-                )
-                enable(
-                    "MethodCanBeStatic",
                 )
                 disable(
                     "EqualsGetClass",

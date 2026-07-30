@@ -160,6 +160,17 @@ public enum PGProperty {
       new String[] {"disable", "prefer", "require"}),
 
   /**
+   * Order in which the driver searches classloaders when loading a class named by a connection
+   * property. See {@link org.postgresql.util.ClassLoaderStrategy} for the meaning of each value.
+   */
+  CLASS_LOADER_STRATEGY(
+      "classLoaderStrategy",
+      "driver-first",
+      "Order in which the driver searches classloaders when loading a class named by a connection property.",
+      false,
+      new String[]{"driver", "driver-first", "context-first"}),
+
+  /**
    * Determine whether SAVEPOINTS used in AUTOSAVE will be released per query or not
    */
   CLEANUP_SAVEPOINTS(
@@ -168,6 +179,28 @@ public enum PGProperty {
       "Determine whether SAVEPOINTS used in AUTOSAVE will be released per query or not",
       false,
       new String[]{"true", "false"}),
+
+  /**
+   * Executor used to run the connection attempt that enforces {@code loginTimeout} during
+   * connection establishment. Value must be the name of a class implementing {@link java.util.concurrent.Executor}.
+   * With a null value, which is the default, the driver runs the connection attempt on a daemon
+   * thread named {@code "PostgreSQL JDBC driver connection thread"}.
+   *
+   * <p>The executor <b>must</b> run the submitted task on a thread other than the caller's and support
+   * thread interruption to handle canceled connection attempts.
+   */
+  CONNECT_EXECUTOR(
+      "connectExecutor",
+      null,
+      "Executor class used to run connection attempts with loginTimeout. It must support thread interrupts and clear interrupt flags after task execution."),
+
+  /**
+   * The String argument to give to the constructor of the connectExecutor class.
+   */
+  CONNECT_EXECUTOR_ARG(
+      "connectExecutorArg",
+      null,
+      "Argument forwarded to constructor of connectExecutor class."),
 
   /**
    * The timeout value used for socket connect operations. If connecting to the server takes longer
@@ -648,6 +681,20 @@ public enum PGProperty {
       "Enable optimization to rewrite and collapse compatible INSERT statements that are batched."),
 
   /**
+   * Maximum number of rows merged into a single multi-values {@code INSERT} when
+   * {@link #REWRITE_BATCHED_INSERTS} is enabled. The merge size is rounded down to a power of two
+   * and never exceeds {@code 32768} rows. With the extended query protocol a statement is limited
+   * to {@code 65535} bind parameters, so the cap is {@code min(65535 / parametersPerRow, 32768)};
+   * the simple query protocol ({@code preferQueryMode=simple}) inlines parameters and has no such
+   * limit, so the cap is {@code 32768}. A value of {@code 0}, the default, uses that maximum; a
+   * positive value lowers it.
+   */
+  REWRITE_BATCHED_INSERTS_SIZE(
+      "reWriteBatchedInsertsSize",
+      "0",
+      "Maximum number of rows merged into a single multi-values INSERT when reWriteBatchedInserts is enabled. Rounded down to a power of two and capped at 32768 rows; with the extended protocol also capped at 65535/parametersPerRow. A value of 0, the default, uses that maximum."),
+
+  /**
    * Maximum number of PBKDF2 iterations the client will accept from the server during SCRAM
    * authentication. If the server advertises more iterations than this value, authentication
    * is rejected before the expensive PBKDF2 computation runs. This mitigates a denial-of-service
@@ -751,11 +798,19 @@ public enum PGProperty {
   /**
    * File containing the SSL Key. Default will be the file {@code postgresql.pk8} in {@code $HOME/.postgresql} (*nix)
    * or {@code %APPDATA%\postgresql} (windows).
+   *
+   * <p>The key format follows the file extension (case-insensitive):
+   * {@code .p12}/{@code .pfx} for PKCS-12,
+   * {@code .pem} for PEM,
+   * {@code .der} for DER/PKCS-8.
+   * For any other extension (including {@code .key}), the driver inspects the first
+   * 64 KiB of the file: it reads the key as PEM if that prefix contains the
+   * {@code -----BEGIN PRIVATE KEY-----} header, otherwise as DER/PKCS-8.</p>
    */
   SSL_KEY(
       "sslkey",
       null,
-      "The location of the client's PKCS#8 SSL key"),
+      "The location of the client's SSL key"),
 
   /**
    * Parameter governing the use of SSL. The allowed values are {@code disable}, {@code allow},

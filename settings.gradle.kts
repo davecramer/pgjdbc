@@ -5,23 +5,23 @@
 
 pluginManagement {
     plugins {
-        id("biz.aQute.bnd.builder") version "7.2.3"
-        id("com.github.burrunan.s3-build-cache") version "1.9.5"
+        id("biz.aQute.bnd.builder") version "7.3.0"
+        id("com.github.burrunan.s3-build-cache") version "1.9.7"
         id("com.github.lburgazzoli.karaf") version "0.5.7"
-        id("com.github.vlsi.crlf") version "2.0.0"
-        id("com.github.vlsi.gettext") version "2.0.0"
-        id("com.github.vlsi.gradle-extensions") version "2.0.0"
-        id("com.github.vlsi.license-gather") version "2.0.0"
-        id("com.github.vlsi.ide") version "2.0.0"
-        id("com.github.vlsi.stage-vote-release") version "2.0.0"
+        id("com.github.vlsi.crlf") version "3.0.2"
+        id("com.github.vlsi.gettext") version "3.0.2"
+        id("com.github.vlsi.gradle-extensions") version "3.0.2"
+        id("com.github.vlsi.license-gather") version "3.0.2"
+        id("com.github.vlsi.ide") version "3.0.2"
+        id("com.github.vlsi.stage-vote-release") version "3.0.2"
         id("org.nosphere.gradle.github.actions") version "1.4.0"
         id("me.champeau.jmh") version "0.7.3"
-        kotlin("jvm") version "2.3.21"
+        kotlin("jvm") version "2.4.10"
     }
 }
 
 plugins {
-    id("com.gradle.develocity") version "4.4.1"
+    id("com.gradle.develocity") version "4.5.0"
     id("com.github.burrunan.s3-build-cache")
 }
 
@@ -47,6 +47,7 @@ if (providers.gradleProperty("jdkTestVersion").orNull?.toInt() != 8) {
 }
 include("postgresql")
 include("testkit")
+include("pgjdbc-gss-test")
 
 project(":postgresql").projectDir = file("pgjdbc")
 

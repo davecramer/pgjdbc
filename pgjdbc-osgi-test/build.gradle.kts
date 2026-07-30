@@ -2,7 +2,7 @@ plugins {
     id("build-logic.java-library")
 }
 
-val pgjdbcRepository by configurations.creating {
+val pgjdbcRepository = configurations.create("pgjdbcRepository") {
     isCanBeConsumed = false
     isCanBeResolved = true
     description =
@@ -33,16 +33,16 @@ dependencies {
     testImplementation("org.ops4j.pax.exam:pax-exam-link-mvn:4.14.0")
     testImplementation("org.ops4j.pax.url:pax-url-aether:3.0.3")
     testImplementation("org.apache.felix:org.apache.felix.framework:7.0.5")
-    testImplementation("ch.qos.logback:logback-core:1.5.32")
-    testImplementation("ch.qos.logback:logback-classic:1.5.32")
-    testRuntimeOnly(platform("org.ow2.asm:asm-bom:9.9.1"))
+    testImplementation("ch.qos.logback:logback-core:1.6.0")
+    testImplementation("ch.qos.logback:logback-classic:1.6.0")
+    testRuntimeOnly(platform("org.ow2.asm:asm-bom:9.10.1"))
     testRuntimeOnly("org.apache.aries.spifly:org.apache.aries.spifly.dynamic.bundle:1.3.7")
 }
 
 // <editor-fold defaultstate="collapsed" desc="Pass dependency versions to pax-exam container">
 val depDir = layout.buildDirectory.dir("pax-dependencies")
 
-val generateDependenciesProperties by tasks.registering(WriteProperties::class) {
+val generateDependenciesProperties = tasks.register<WriteProperties>("generateDependenciesProperties") {
     description = "Generates dependencies.properties so pax-exam can use .versionAsInProject()"
     destinationFile.set(depDir.map { it.file("META-INF/maven/dependencies.properties") })
     property("groupId", project.group)
@@ -69,7 +69,7 @@ sourceSets.test {
 // This repository is used instead of ~/.m2/... to avoid clash with /.m2/ contents
 val paxLocalCacheRepository = layout.buildDirectory.dir("pax-repo")
 
-val cleanCachedPgjdbc by tasks.registering(Delete::class) {
+val cleanCachedPgjdbc = tasks.register<Delete>("cleanCachedPgjdbc") {
     description =
         "Removes cached postgresql.jar from pax-repo folder so pax-exam always resolves the recent one"
     delete(paxLocalCacheRepository.map { it.dir("org/postgresql") })

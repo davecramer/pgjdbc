@@ -40,36 +40,36 @@ jobs:
       ACTIONS_STEP_DEBUG: true
       ACTIONS_RUNNER_DEBUG: true
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         fetch-depth: 50
     - name: 'Set up JDK 21'
-      uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+      uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
       with:
         distribution: zulu
         java-version: 21
-    - uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0.1
+    - uses: burrunan/gradle-cache-action@4b67497abd37a511d6c1dc6299bdd84ff39f7bf5 # v3.0.2
       name: Verify code style
       env:
         S3_BUILD_CACHE_ACCESS_KEY_ID: ${{ secrets.S3_BUILD_CACHE_ACCESS_KEY_ID }}
         S3_BUILD_CACHE_SECRET_KEY: ${{ secrets.S3_BUILD_CACHE_SECRET_KEY }}
       with:
         job-id: jdk21
-        arguments: styleCheck jandex -PenableErrorprone classes
+        arguments: styleCheck jandex -PenableErrorprone classes :benchmarks:jmhJar
 
   linux-checkerframework:
     name: 'CheckerFramework'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 50
       - name: 'Set up JDK 21'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: zulu
           java-version: 21
-      - uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0.1
+      - uses: burrunan/gradle-cache-action@4b67497abd37a511d6c1dc6299bdd84ff39f7bf5 # v3.0.2
         name: Run CheckerFramework
         env:
           S3_BUILD_CACHE_ACCESS_KEY_ID: ${{ secrets.S3_BUILD_CACHE_ACCESS_KEY_ID }}
@@ -83,18 +83,18 @@ jobs:
     name: Source distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 50
       - name: Start PostgreSQL
         working-directory: docker/postgres-server
-        run: docker compose up -d && docker compose logs
+        run: docker compose up -d --wait || { docker compose logs; exit 1; }
       - name: 'Set up JDK 21'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: zulu
           java-version: 21
-      - uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0.1
+      - uses: burrunan/gradle-cache-action@4b67497abd37a511d6c1dc6299bdd84ff39f7bf5 # v3.0.2
         name: Prepare source distribution
         env:
           S3_BUILD_CACHE_ACCESS_KEY_ID: ${{ secrets.S3_BUILD_CACHE_ACCESS_KEY_ID }}
@@ -111,7 +111,7 @@ jobs:
           cd postgresql-1.0-jdbc-src
           mvn --batch-mode --fail-at-end --show-version verify
       - name: Attach heap dump if any
-        if: ${{ failure() && github.event_name == 'pull_request' }}
+        if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pgjdbc-heapdump-source-distribution
@@ -123,11 +123,13 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     env:
-      MATRIX_JOBS: 5
+      MATRIX_JOBS: 6
       GITHUB_PR_NUMBER: ${{ github.event.number }}
       RNG_SEED: ${{ github.event.inputs.matrix_rng_seed }}
+      # Set the repository variable to false to skip PostgreSQL HEAD tests on pull requests.
+      RUN_PG_HEAD_TESTS_IN_PR: ${{ vars.RUN_PG_HEAD_TESTS_IN_PR }}
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         fetch-depth: 50
     - id: set-matrix
@@ -149,7 +151,7 @@ jobs:
       ACTIONS_RUNNER_DEBUG: true
       TZ: ${{ matrix.tz }}
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         fetch-depth: 50
     - name: Start PostgreSQL PGV=${{ matrix.pg_version }} TZ=${{ matrix.server_tz }} XA=${{ matrix.xa }} SSL=${{ matrix.ssl }} SCRAM=${{ matrix.scram }} CREATE_REPLICAS=${{ matrix.replication }}
@@ -162,6 +164,8 @@ jobs:
         SSL: ${{ matrix.ssl }}
         SCRAM: ${{ matrix.scram }}
         CREATE_REPLICAS: ${{ matrix.replication }}
+        PG_IMAGE: ${{ matrix.pg_version == 'HEAD' && 'pgjdbc/postgres-devel:ci-head' || '' }}
+        PG_PULL_POLICY: ${{ matrix.pg_version == 'HEAD' && 'build' || 'missing' }}
       # The below run command is long, however, it is intentional, and it makes the output nicer in GitHub UI
       # language=bash
       run: |
@@ -169,7 +173,7 @@ jobs:
 
         docker compose down -v --rmi local || true
         sed -i -r '/- (543[3-4]):\1/d' docker-compose.yml
-        docker compose up -d
+        docker compose up -d --wait || { docker compose logs; exit 1; }
         docker compose logs
     - name: Start PostgreSQL PGV=${{ matrix.pg_version }}
       if: ${{ runner.os != 'Linux' }}
@@ -245,7 +249,7 @@ jobs:
         SSL: ${{ matrix.ssl }}
         REPLICATION: ${{ matrix.replication }}
     - name: Set up Java 21 and ${{ matrix.non_ea_java_version }}, ${{ matrix.java_distribution }}, ${{ runner.arch }}
-      uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+      uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
       with:
         # The latest one will be the default, so we use Java 21 for launching Gradle
         # oracle-actions/setup-java below requires Java 21, so we must install Java 21 before calling oracle-actions/setup-java
@@ -268,7 +272,7 @@ jobs:
     - name: Set up Java 21 ${{ matrix.java_distribution }} as default
       # oracle-actions/setup-java above installs EA java by default, so we need to reinstall Java 21 as the default
       if: ${{ matrix.oracle_java_website != '' }}
-      uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+      uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
       with:
         java-version: 21
         distribution: ${{ matrix.java_distribution }}
@@ -295,25 +299,6 @@ jobs:
         EOF
         fi
 
-    - uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0.1
-      name: Test
-      env:
-        S3_BUILD_CACHE_ACCESS_KEY_ID: ${{ secrets.S3_BUILD_CACHE_ACCESS_KEY_ID }}
-        S3_BUILD_CACHE_SECRET_KEY: ${{ secrets.S3_BUILD_CACHE_SECRET_KEY }}
-        _JAVA_OPTIONS: ${{ matrix.extraJvmArgs }}
-      with:
-        read-only: false
-        job-id: jdk${{ matrix.java_version }}
-        arguments: --scan --no-parallel --no-daemon jandex test ${{ matrix.extraGradleArgs }}
-        properties: |
-          includeTestTags=${{ matrix.includeTestTags }}
-          testExtraJvmArgs=${{ matrix.testExtraJvmArgs }}
-          jdkBuildVersion=21
-          jdkTestVersion=${{ matrix.java_version == 'EA' && steps.setup_ea_java.outputs.version || matrix.java_version }}
-          jdkTestVendor=${{ matrix.java_vendor }}
-          # We provision JDKs with GitHub Actions for caching purposes, so Gradle should rather fail in case JDK is not found
-          org.gradle.java.installations.auto-download=false
-
     - name: 'Install krb5 for GSS tests'
       if: ${{ matrix.gss == 'yes' }}
       # language=bash
@@ -326,21 +311,68 @@ jobs:
       if: ${{ matrix.gss == 'yes' }}
       # language=bash
       run: |
-        sudo -- sh -c "echo 127.0.0.1 auth-test-localhost.postgresql.example.com localhost > /etc/hosts"
+        sudo sed -i '/^127\.0\.0\.1/c\127.0.0.1 auth-test-localhost.postgresql.example.com localhost' /etc/hosts
         cat /etc/hosts
-    - uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0.1
-      if: ${{ matrix.deploy_to_maven_local }}
-      name: Deploy pgjdbc to mavenLocal
+
+    - uses: burrunan/gradle-cache-action@4b67497abd37a511d6c1dc6299bdd84ff39f7bf5 # v3.0.2
+      name: Test
+      id: test
+      env:
+        S3_BUILD_CACHE_ACCESS_KEY_ID: ${{ secrets.S3_BUILD_CACHE_ACCESS_KEY_ID }}
+        S3_BUILD_CACHE_SECRET_KEY: ${{ secrets.S3_BUILD_CACHE_SECRET_KEY }}
+        _JAVA_OPTIONS: ${{ matrix.extraJvmArgs }}
       with:
         read-only: false
         job-id: jdk${{ matrix.java_version }}
-        arguments: publishToMavenLocal -Ppgjdbc.version=1.0.0-dev-master -PskipJavadoc
+        arguments: --scan --no-parallel --no-daemon jandex test ${{ matrix.gss == 'yes' && '-PgssTests' || '' }} ${{ matrix.extraGradleArgs }}
+        properties: |
+          includeTestTags=${{ matrix.includeTestTags }}
+          testExtraJvmArgs=${{ matrix.testExtraJvmArgs }}
+          jdkBuildVersion=21
+          jdkTestVersion=${{ matrix.java_version == 'EA' && steps.setup_ea_java.outputs.version || matrix.java_version }}
+          jdkTestVendor=${{ matrix.java_vendor }}
+          # We provision JDKs with GitHub Actions for caching purposes, so Gradle should rather fail in case JDK is not found
+          org.gradle.java.installations.auto-download=false
+
+    - name: Build coverage report after a test failure
+      # On success jacocoReport already ran as part of the Test step above. When a
+      # test fails, that run aborts before the report, so re-run jacocoReport on its
+      # own (excluding the test tasks) to merge the coverage that was collected.
+      # Pull requests only: a failed branch build (master, release) skips the upload
+      # below, so rebuilding the report there would be wasted work.
+      # `!cancelled()` is required: without a status function the `if` is implicitly
+      # wrapped in success(), which never holds after the test step has failed.
+      if: ${{ !cancelled() && matrix.collectCoverage && steps.test.outcome == 'failure' && github.event_name == 'pull_request' }}
+      uses: burrunan/gradle-cache-action@4b67497abd37a511d6c1dc6299bdd84ff39f7bf5 # v3.0.2
+      with:
+        read-only: false
+        job-id: jdk${{ matrix.java_version }}
+        arguments: --scan --no-parallel --no-daemon jacocoReport -x test
+
+    - name: Upload coverage to Codecov
+      # Pull requests always upload, even after a test failure, so the PR shows how much of
+      # the changed code is already covered. Branch builds (master, release) upload only when
+      # tests pass: a failed run reports partial coverage, which would lower the baseline that
+      # PR diffs compare against. Skip jobs that did not collect coverage. A push to a protected
+      # branch needs CODECOV_TOKEN; pull requests upload tokenlessly, since the secret is not
+      # exposed to forks.
+      if: ${{ !cancelled() && matrix.collectCoverage && (github.event_name == 'pull_request' || steps.test.outcome == 'success') }}
+      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./build/reports/jacoco/jacocoReport/jacocoReport.xml
+        # Upload only the aggregate report; do not search the tree for other files.
+        disable_search: true
+        # A Codecov hiccup must not fail the test job.
+        fail_ci_if_error: false
+
     - name: Attach heap dump if any
-      if: ${{ failure() && github.event_name == 'pull_request' }}
+      if: ${{ failure() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: pgjdbc-heapdump
-        path: pgjdbc/*.hprof
+        path: '**/*.hprof'
+        if-no-files-found: ignore
     - name: Collect PostgreSQL server logs (Linux)
       if: ${{ failure() && runner.os == 'Linux' }}
       shell: bash
@@ -394,27 +426,6 @@ jobs:
       with:
         name: ${{ steps.artifact_name.outputs.name }}
         path: ${{ runner.temp }}/pg-server-logs.txt
-    - name: Test GSS
-      if: ${{ matrix.gss == 'yes' }}
-      # language=bash
-      run: |
-        cd test-gss
-        ./gradlew assemble
-        ./gradlew run
-      env:
-        KRB5CCNAME: /home/runner/work/pgjdbc/pgjdbc/test-gss/tmp_check/krb5cc
-        KRB5_CONFIG: /home/runner/work/pgjdbc/pgjdbc/test-gss/tmp_check/krb5.conf
-        KRB5_KDC_PROFILE: /home/runner/work/pgjdbc/pgjdbc/test-gss/tmp_check/kdc.conf
-    - name: Test anorm-sbt
-      if: ${{ matrix.check_anorm_sbt == 'yes' }}
-      # language=bash
-      run: |
-        # mkdir -p $HOME/.sbt/launchers/0.13.12
-        # curl -L -o $HOME/.sbt/launchers/0.13.12/sbt-launch.jar http://dl.bintray.com/typesafe/ivy-releases/org.scala-sbt/sbt-launch/0.13.12/sbt-launch.jar
-
-        cd test-anorm-sbt
-        sbt test
-
     - name: Cleanup Docker
       if: ${{ always() && runner.os == 'Linux' }}
       working-directory: docker/postgres-server
