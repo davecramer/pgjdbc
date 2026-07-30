@@ -2,6 +2,11 @@
 Notable changes since version 42.0.0, read the complete [History of Changes](https://jdbc.postgresql.org/documentation/changelog.html).
 
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
+## [Unreleased]
+
+### Fixed
+* fix: a socket read timeout no longer ends a COPY operation. Logical replication sets the socket timeout to the status interval and uses the timeout as its wake-up to send a standby status update, so since 42.7.11 a consumer of the blocking `PGReplicationStream.read()` API failed with "Tried to write to an inactive copy operation" as soon as the slot went idle. A plain `COPY TO STDOUT` with `socketTimeout` lost `cancelCopy()` the same way, leaving the server in COPY mode. A COPY that dies with the connection now closes that connection rather than releasing its lock, so other operations fail instead of hanging [Issue #4328](https://github.com/pgjdbc/pgjdbc/issues/4328) [PR #4331](https://github.com/pgjdbc/pgjdbc/pull/4331)
+
 ## [42.7.13] (2026-07-06)
 
 ### Added
