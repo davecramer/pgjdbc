@@ -33,19 +33,25 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * A zero length GSS token is a valid continuation, so a server that answers every token with
- * another never ends the handshake unless the client does. A real GSSContext cannot be
- * built without a Kerberos realm, so these tests pass a stub context straight to the
- * package-private negotiate method.
+ * another one never ends the handshake unless the client does. Both handshakes stop after
+ * {@link PGStream#MAX_AUTH_ROUND_TRIPS} rounds with a protocol violation and a broken stream, and
+ * {@link GssEncAction} also refuses a token whose declared length is over its limit.
+ *
+ * <p>Each script holds ten more messages than the limit allows, so it is the limit and not the end
+ * of the script that ends the loop. A real GSSContext cannot be built without a Kerberos realm, so
+ * these tests pass a stub context straight to the package-private negotiate method.</p>
  */
 @Isolated("Uses Locale.setDefault")
 class GssHandshakeLoopTest {
 
   private static final int MAX_ROUNDS = PGStream.MAX_AUTH_ROUND_TRIPS;
 
-  // The assertions match on message text, which GT.tr translates once these strings are
-  // localized.
   private static Locale defaultLocale;
 
+  /**
+   * Sets the root locale, so that the assertions keep matching the English message text once
+   * GT.tr has a translation of it to return.
+   */
   @BeforeAll
   static void useRootLocale() {
     defaultLocale = Locale.getDefault();
@@ -82,7 +88,10 @@ class GssHandshakeLoopTest {
     return new PGStream(factory, new HostSpec("localhost", 5432), 0, 8192);
   }
 
-  /** AuthenticationGSSContinue carrying a zero length token, repeated. */
+  /**
+   * The given number of AuthenticationGSSContinue messages, each the type byte 'R', a declared
+   * length of 8 and the authentication code 8, which leaves no token behind it.
+   */
   private static byte[] continueMessages(int count) {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     for (int i = 0; i < count; i++) {
@@ -92,7 +101,10 @@ class GssHandshakeLoopTest {
     return out.toByteArray();
   }
 
-  /** Raw length-prefixed zero length tokens, which is how the encryption handshake is framed. */
+  /**
+   * The given number of zero length tokens, each a 4 byte length and no payload. The encryption
+   * handshake frames its tokens that way, with no message type byte in front.
+   */
   private static byte[] rawTokens(int count) {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     for (int i = 0; i < count; i++) {
@@ -115,7 +127,7 @@ class GssHandshakeLoopTest {
     assertTrue(e.getMessage().contains("round trips"), e.getMessage());
     assertEquals(PSQLState.PROTOCOL_VIOLATION.getState(), ((PSQLException) e).getSQLState());
     assertTrue(stream.isBroken());
-    // Each round sends a GSSResponse, the type byte and length followed by a one byte token.
+    // Each round sends a GSSResponse: 1 type byte + 4 length bytes + the 1 byte token.
     assertEquals(MAX_ROUNDS * 6, factory[0].getWritten().length,
         "the driver must send exactly the capped number of tokens");
   }
@@ -134,12 +146,15 @@ class GssHandshakeLoopTest {
     assertTrue(e.getMessage().contains("round trips"), e.getMessage());
     assertEquals(PSQLState.PROTOCOL_VIOLATION.getState(), ((PSQLException) e).getSQLState());
     assertTrue(stream.isBroken());
-    // Each round sends a four byte length followed by a one byte token.
+    // Each round sends 4 length bytes + the 1 byte token, with no message type in front.
     assertEquals(MAX_ROUNDS * 5, factory[0].getWritten().length,
         "the driver must send exactly the capped number of tokens");
   }
 
-  /** The encryption handshake reads a raw length, so its limit is checked there. */
+  /**
+   * The four script bytes declare a token length of 65536. The encryption handshake reads that
+   * length raw, so its limit is checked there, before any token body is read.
+   */
   @Test
   @Timeout(value = 30, unit = TimeUnit.SECONDS)
   void rejectsAnOversizedHandshakeToken() throws Exception {
