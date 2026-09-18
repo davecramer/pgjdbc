@@ -5,14 +5,19 @@
 
 package org.postgresql.core;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.postgresql.util.GT;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -29,6 +34,16 @@ import java.util.concurrent.TimeUnit;
 class VisibleBufferedInputStreamTest {
 
   private static final int INITIAL_SIZE = 8192;
+
+  /**
+   * The refusal {@link VisibleBufferedInputStream#growBuffer} builds for a request it will not
+   * allocate for. The comparison goes through {@link GT#tr}, which is how the driver built the
+   * text, so it holds in whatever locale the tests run under.
+   */
+  private static String refusalFor(long required) {
+    return GT.tr("Backend asked for {0} bytes of buffer, the maximum is {1} bytes.",
+        String.valueOf(required), String.valueOf(VisibleBufferedInputStream.MAX_BUFFER_SIZE));
+  }
 
   /** Returns one byte per read, however many the caller asked for. */
   private static class Trickle extends InputStream {
@@ -91,11 +106,11 @@ class VisibleBufferedInputStreamTest {
     VisibleBufferedInputStream in =
         new VisibleBufferedInputStream(new Trickle(), INITIAL_SIZE);
 
-    assertTrue(in.ensureBytes(wanted));
+    assertTrue(in.ensureBytes(wanted), "the stub must deliver the whole request");
 
     // One allocation, sized to the request plus MINIMUM_READ (1024). Growing by doubling instead
     // would allocate several times over for the one request.
-    assertEquals(wanted + 1024, in.getBuffer().length);
+    assertEquals(wanted + 1024, in.getBuffer().length, "buffer length after one request");
   }
 
   @Test
@@ -106,9 +121,11 @@ class VisibleBufferedInputStreamTest {
     IOException e = assertThrows(IOException.class,
         () -> in.ensureBytes(VisibleBufferedInputStream.MAX_BUFFER_SIZE + 1));
 
-    assertTrue(e.getMessage().contains(String.valueOf(VisibleBufferedInputStream.MAX_BUFFER_SIZE)),
-        e.getMessage());
-    assertEquals(INITIAL_SIZE, in.getBuffer().length, "the buffer must stay at its initial size");
+    assertAll(
+        () -> assertEquals(refusalFor(VisibleBufferedInputStream.MAX_BUFFER_SIZE + 1L),
+            e.getMessage()),
+        () -> assertEquals(INITIAL_SIZE, in.getBuffer().length,
+            "the buffer must stay at its initial size"));
   }
 
   /**
@@ -116,39 +133,44 @@ class VisibleBufferedInputStreamTest {
    * message of up to {@link PGStream#MAX_MESSAGE_LENGTH}, just under a gigabyte. Both are far
    * above the 32 megabytes the buffer will grow to, so both leave it at its initial size.
    */
-  @Test
-  void refusesTheLargestDeclarableLengths() {
+  @ParameterizedTest(name = "a request for {0} bytes")
+  @ValueSource(ints = {Integer.MAX_VALUE, PGStream.MAX_MESSAGE_LENGTH})
+  void refusesTheLargestDeclarableLengths(int declared) {
     VisibleBufferedInputStream in = new VisibleBufferedInputStream(new Bulk(), INITIAL_SIZE);
 
-    assertThrows(IOException.class, () -> in.ensureBytes(Integer.MAX_VALUE));
-    assertThrows(IOException.class, () -> in.ensureBytes(PGStream.MAX_MESSAGE_LENGTH));
-    assertEquals(INITIAL_SIZE, in.getBuffer().length);
+    IOException e = assertThrows(IOException.class, () -> in.ensureBytes(declared));
+
+    assertAll(
+        () -> assertEquals(refusalFor(declared), e.getMessage()),
+        () -> assertEquals(INITIAL_SIZE, in.getBuffer().length,
+            "the buffer must stay at its initial size"));
   }
 
   @Test
   void stillDoublesForOrdinaryReads() throws IOException {
     VisibleBufferedInputStream in = new VisibleBufferedInputStream(new Bulk(), INITIAL_SIZE);
 
-    assertTrue(in.ensureBytes(INITIAL_SIZE));
-    assertEquals(INITIAL_SIZE, in.getBuffer().length);
-    assertTrue(in.ensureBytes(INITIAL_SIZE + 1));
+    assertTrue(in.ensureBytes(INITIAL_SIZE), "the stub must fill the buffer");
+    assertEquals(INITIAL_SIZE, in.getBuffer().length, "a request that fits must not grow it");
+    assertTrue(in.ensureBytes(INITIAL_SIZE + 1), "the stub must deliver one byte more");
 
-    assertEquals(INITIAL_SIZE * 2, in.getBuffer().length);
+    assertEquals(INITIAL_SIZE * 2, in.getBuffer().length, "buffer length after the growth");
   }
 
   /** A buffer grown for one message returns to its initial size the moment it is fully drained. */
   @Test
   void shrinksBackAsSoonAsAnOutsizedReadIsDrained() throws IOException {
     VisibleBufferedInputStream in = new VisibleBufferedInputStream(new Bulk(), INITIAL_SIZE);
-    assertTrue(in.ensureBytes(20000));
-    assertTrue(in.getBuffer().length > INITIAL_SIZE);
+    assertTrue(in.ensureBytes(20000), "the stub must deliver the whole request");
+    assertTrue(in.getBuffer().length > INITIAL_SIZE, "the request must have grown the buffer");
     int buffered = in.available();
     in.skip(buffered);
 
     // The skip drains the buffer, so the shrink happens there rather than on the next read. The
     // read after it returns the byte at stream position buffered, where the skip left off.
-    assertEquals(INITIAL_SIZE, in.getBuffer().length);
-    assertEquals(buffered % 251, in.read());
+    assertAll(
+        () -> assertEquals(INITIAL_SIZE, in.getBuffer().length, "buffer length after the skip"),
+        () -> assertEquals(buffered % 251, in.read(), "first byte after the skip"));
   }
 
   @Test
@@ -159,7 +181,7 @@ class VisibleBufferedInputStreamTest {
     in.skip(INITIAL_SIZE - 100);
 
     // 100 unread plus the 900 more this asks for is 1000, and 1000 + MINIMUM_READ fits in 8192.
-    assertTrue(in.ensureBytes(1000));
+    assertTrue(in.ensureBytes(1000), "the stub must deliver the whole request");
 
     assertSame(before, in.getBuffer(), "should have compacted rather than allocated");
   }
@@ -174,7 +196,7 @@ class VisibleBufferedInputStreamTest {
 
     // 100 unread plus the 7400 more this asks for is 7500, which fits in 8192, but 7500 +
     // MINIMUM_READ does not.
-    assertTrue(in.ensureBytes(7500));
+    assertTrue(in.ensureBytes(7500), "the stub must deliver the whole request");
 
     assertNotSame(before, in.getBuffer(), "should have grown rather than compacted");
   }
@@ -187,10 +209,10 @@ class VisibleBufferedInputStreamTest {
   @Timeout(value = 30, unit = TimeUnit.SECONDS)
   void keepsTheDataAcrossGrowth() throws IOException {
     VisibleBufferedInputStream in = new VisibleBufferedInputStream(new Bulk(), INITIAL_SIZE);
-    assertTrue(in.ensureBytes(10));
+    assertTrue(in.ensureBytes(10), "the stub must deliver the first request");
     in.skip(10);
 
-    assertTrue(in.ensureBytes(20000));
+    assertTrue(in.ensureBytes(20000), "the stub must deliver the whole request");
 
     byte[] buffer = in.getBuffer();
     for (int i = 0; i < 20000; i++) {
@@ -209,8 +231,15 @@ class VisibleBufferedInputStreamTest {
   void anUnterminatedStringTrickledOneByteAtATimeStopsAtTheMaximum() {
     VisibleBufferedInputStream in = new VisibleBufferedInputStream(new Trickle(), INITIAL_SIZE);
 
-    assertThrows(IOException.class, () -> in.scanCStringLength());
-    assertTrue(in.getBuffer().length <= VisibleBufferedInputStream.MAX_BUFFER_SIZE);
+    IOException e = assertThrows(IOException.class, () -> in.scanCStringLength());
+
+    assertAll(
+        // The scan itself has no limit to report, so what it reports is the buffer refusing to
+        // grow. The maximum is substituted into the message, so this holds in any locale.
+        () -> assertTrue(e.getMessage()
+            .contains(String.valueOf(VisibleBufferedInputStream.MAX_BUFFER_SIZE)), e.getMessage()),
+        () -> assertTrue(in.getBuffer().length <= VisibleBufferedInputStream.MAX_BUFFER_SIZE,
+            "the buffer must not have grown past its maximum"));
   }
 
   /**
@@ -223,7 +252,12 @@ class VisibleBufferedInputStreamTest {
     VisibleBufferedInputStream in =
         new VisibleBufferedInputStream(new Unterminated(), INITIAL_SIZE);
 
-    assertThrows(IOException.class, () -> in.scanCStringLength());
-    assertTrue(in.getBuffer().length <= VisibleBufferedInputStream.MAX_BUFFER_SIZE);
+    IOException e = assertThrows(IOException.class, () -> in.scanCStringLength());
+
+    assertAll(
+        () -> assertTrue(e.getMessage()
+            .contains(String.valueOf(VisibleBufferedInputStream.MAX_BUFFER_SIZE)), e.getMessage()),
+        () -> assertTrue(in.getBuffer().length <= VisibleBufferedInputStream.MAX_BUFFER_SIZE,
+            "the buffer must not have grown past its maximum"));
   }
 }

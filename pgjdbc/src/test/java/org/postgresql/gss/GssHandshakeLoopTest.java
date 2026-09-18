@@ -5,6 +5,7 @@
 
 package org.postgresql.gss;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -12,23 +13,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.postgresql.core.CannedSocketFactory;
 import org.postgresql.core.PGStream;
+import org.postgresql.util.GT;
 import org.postgresql.util.HostSpec;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.PSQLState;
 
 import org.ietf.jgss.GSSContext;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -40,27 +38,24 @@ import java.util.concurrent.TimeUnit;
  * <p>Each script holds ten more messages than the limit allows, so it is the limit and not the end
  * of the script that ends the loop. A real GSSContext cannot be built without a Kerberos realm, so
  * these tests pass a stub context straight to the package-private negotiate method.</p>
+ *
+ * <p>Each refusal is compared against {@link GT#tr}, which is how the driver built the text, so the
+ * comparison holds in whatever locale the tests run under.</p>
  */
-@Isolated("Uses Locale.setDefault")
 class GssHandshakeLoopTest {
 
   private static final int MAX_ROUNDS = PGStream.MAX_AUTH_ROUND_TRIPS;
 
-  private static Locale defaultLocale;
-
   /**
-   * Sets the root locale, so that the assertions keep matching the English message text once
-   * GT.tr has a translation of it to return.
+   * The largest token length {@link GssEncAction} accepts. PostgreSQL's PQ_GSS_AUTH_BUFFER_SIZE of
+   * 64 kB counts the 4 length bytes, so the token maximum is 4 smaller.
    */
-  @BeforeAll
-  static void useRootLocale() {
-    defaultLocale = Locale.getDefault();
-    Locale.setDefault(Locale.ROOT);
-  }
+  private static final int MAX_HANDSHAKE_TOKEN_SIZE = 64 * 1024 - 4;
 
-  @AfterAll
-  static void restoreLocale() {
-    Locale.setDefault(defaultLocale);
+  /** The refusal {@link GssEncAction} builds for a token length outside its range. */
+  private static String tokenRefusalFor(int declaredLength) {
+    return GT.tr("Backend declared a GSS token of {0} bytes, the maximum is {1}.",
+        String.valueOf(declaredLength), String.valueOf(MAX_HANDSHAKE_TOKEN_SIZE));
   }
 
   /** A context that returns a one byte token and never reports itself established. */
@@ -124,12 +119,15 @@ class GssHandshakeLoopTest {
     Exception e = action.negotiate(neverEstablishedContext());
 
     assertNotNull(e, "negotiate must report an error once the round limit is reached");
-    assertTrue(e.getMessage().contains("round trips"), e.getMessage());
-    assertEquals(PSQLState.PROTOCOL_VIOLATION.getState(), ((PSQLException) e).getSQLState());
-    assertTrue(stream.isBroken());
-    // Each round sends a GSSResponse: 1 type byte + 4 length bytes + the 1 byte token.
-    assertEquals(MAX_ROUNDS * 6, factory[0].getWritten().length,
-        "the driver must send one token per round and stop at the limit");
+    assertAll(
+        () -> assertEquals(GT.tr("GSS authentication did not complete within {0} round trips.",
+            MAX_ROUNDS), e.getMessage()),
+        () -> assertEquals(PSQLState.PROTOCOL_VIOLATION.getState(),
+            ((PSQLException) e).getSQLState(), "SQLState of the refusal"),
+        () -> assertTrue(stream.isBroken(), "the stream must be marked broken"),
+        // Each round sends a GSSResponse: 1 type byte + 4 length bytes + the 1 byte token.
+        () -> assertEquals(MAX_ROUNDS * 6, factory[0].getWritten().length,
+            "the driver must send one token per round and stop at the limit"));
   }
 
   @Test
@@ -143,17 +141,20 @@ class GssHandshakeLoopTest {
     Exception e = action.negotiate(neverEstablishedContext());
 
     assertNotNull(e, "negotiate must report an error once the round limit is reached");
-    assertTrue(e.getMessage().contains("round trips"), e.getMessage());
-    assertEquals(PSQLState.PROTOCOL_VIOLATION.getState(), ((PSQLException) e).getSQLState());
-    assertTrue(stream.isBroken());
-    // Each round sends 4 length bytes + the 1 byte token, with no message type in front.
-    assertEquals(MAX_ROUNDS * 5, factory[0].getWritten().length,
-        "the driver must send one token per round and stop at the limit");
+    assertAll(
+        () -> assertEquals(GT.tr("GSS encryption handshake did not complete within {0} round"
+            + " trips.", MAX_ROUNDS), e.getMessage()),
+        () -> assertEquals(PSQLState.PROTOCOL_VIOLATION.getState(),
+            ((PSQLException) e).getSQLState(), "SQLState of the refusal"),
+        () -> assertTrue(stream.isBroken(), "the stream must be marked broken"),
+        // Each round sends 4 length bytes + the 1 byte token, with no message type in front.
+        () -> assertEquals(MAX_ROUNDS * 5, factory[0].getWritten().length,
+            "the driver must send one token per round and stop at the limit"));
   }
 
   /**
-   * The four script bytes declare a token length of 65536. The encryption handshake reads that
-   * length raw, so its limit is checked there, before any token body is read.
+   * The four script bytes declare a token length of 65536, four above the maximum. The encryption
+   * handshake reads that length raw, so its limit is checked there, before any token body is read.
    */
   @Test
   @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -167,7 +168,8 @@ class GssHandshakeLoopTest {
     IOException e = assertThrows(IOException.class,
         () -> action.negotiate(neverEstablishedContext()));
 
-    assertTrue(e.getMessage().contains("GSS token"), e.getMessage());
-    assertTrue(stream.isBroken());
+    assertAll(
+        () -> assertEquals(tokenRefusalFor(MAX_HANDSHAKE_TOKEN_SIZE + 4), e.getMessage()),
+        () -> assertTrue(stream.isBroken(), "the stream must be marked broken"));
   }
 }
