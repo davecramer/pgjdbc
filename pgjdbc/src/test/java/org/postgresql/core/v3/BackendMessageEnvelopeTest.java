@@ -5,6 +5,7 @@
 
 package org.postgresql.core.v3;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -22,16 +23,14 @@ import org.postgresql.core.QueryExecutor;
 import org.postgresql.core.ResultCursor;
 import org.postgresql.core.ResultHandlerBase;
 import org.postgresql.core.Tuple;
+import org.postgresql.util.GT;
 import org.postgresql.util.HostSpec;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.PSQLState;
 import org.postgresql.util.ServerErrorMessage;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -40,7 +39,6 @@ import java.sql.SQLException;
 import java.sql.SQLWarning;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import java.util.Properties;
 
 /**
@@ -55,28 +53,16 @@ import java.util.Properties;
  *
  * <p>Each test drives the readers in {@link QueryExecutorImpl} from a canned reply, so a test can
  * give a count or a length a value a server would never send.</p>
+ *
+ * <p>The driver built each refusal with {@link GT#tr}, and the assertions compare against GT.tr as
+ * well, so they hold in whatever locale the tests run under.</p>
  */
-@Isolated("Uses Locale.setDefault")
 class BackendMessageEnvelopeTest {
 
-  private static Locale defaultLocale;
-
-  /**
-   * We force the root locale because the assertions below match the English text GT.tr returns,
-   * and a translated default locale would fail them. The guard is partial: GT resolves its bundle
-   * once, in a static initializer, so setting the locale here only reaches GT when this class is
-   * the first to load it. Of the messages these assertions match, only the maxResultBuffer limit
-   * has translations, and each of those keeps the property name the assertion looks for.
-   */
-  @BeforeAll
-  static void useRootLocale() {
-    defaultLocale = Locale.getDefault();
-    Locale.setDefault(Locale.ROOT);
-  }
-
-  @AfterAll
-  static void restoreLocale() {
-    Locale.setDefault(defaultLocale);
+  /** The refusal {@link PGStream#receiveMessageLength} builds for a length outside its range. */
+  private static String lengthRefusal(String messageName, int declared, int min, int max) {
+    return GT.tr("Backend declared a {0} message length of {1} bytes, expected {2} to {3} bytes.",
+        messageName, String.valueOf(declared), String.valueOf(min), String.valueOf(max));
   }
 
   /** Builds the bytes of a scripted backend reply. */
@@ -246,7 +232,9 @@ class BackendMessageEnvelopeTest {
 
     SQLException e = runQuery(script);
     assertNotNull(e, "a RowDescription that cannot hold its fields must be refused");
-    assertTrue(rootCause(e).getMessage().contains("cannot hold"), rootCause(e).getMessage());
+    // 4 length + 2 count + the 18 bytes of the short description is a declared 24.
+    assertEquals(GT.tr("RowDescription of {0} bytes cannot hold {1} field descriptions.",
+        "24", "1"), rootCause(e).getMessage());
   }
 
   /**
@@ -262,8 +250,10 @@ class BackendMessageEnvelopeTest {
         .readyForQuery();
 
     SQLException e = runQuery(script);
-    assertNotNull(e);
-    assertTrue(rootCause(e).getMessage().contains("cannot hold"), rootCause(e).getMessage());
+    assertNotNull(e, "a RowDescription claiming 1664 fields must be refused");
+    // 4 length + 2 count + the 19 bytes of the one description is a declared 25.
+    assertEquals(GT.tr("RowDescription of {0} bytes cannot hold {1} field descriptions.",
+        "25", "1664"), rootCause(e).getMessage());
   }
 
   /**
@@ -309,7 +299,8 @@ class BackendMessageEnvelopeTest {
 
     SQLException e = describeQuery(script);
     assertNotNull(e, "a ParameterDescription that does not hold its types must be refused");
-    assertTrue(rootCause(e).getMessage().contains("parameter types"), rootCause(e).getMessage());
+    assertEquals(GT.tr("ParameterDescription of {0} bytes does not hold exactly {1} parameter"
+        + " types.", "10", "2"), rootCause(e).getMessage());
   }
 
   @Test
@@ -322,7 +313,7 @@ class BackendMessageEnvelopeTest {
 
     QueryExecutor executor = executorOf(script);
     CopyOperation op = executor.startCopy("copy t to stdout", true);
-    assertEquals(1, ((CopyOut) op).getFieldCount());
+    assertEquals(1, ((CopyOut) op).getFieldCount(), "field count of the copy operation");
   }
 
   /**
@@ -338,7 +329,8 @@ class BackendMessageEnvelopeTest {
     QueryExecutor executor = executorOf(script);
     SQLException e = assertThrows(SQLException.class,
         () -> executor.startCopy("copy t to stdout", true));
-    assertTrue(rootCause(e).getMessage().contains("field formats"), rootCause(e).getMessage());
+    assertEquals(GT.tr("Copy response of {0} bytes does not hold exactly {1} field formats.",
+        "11", "1"), rootCause(e).getMessage());
   }
 
   /**
@@ -352,7 +344,10 @@ class BackendMessageEnvelopeTest {
         .message('Z', new byte[]{'I'});
 
     IOException e = assertThrows(IOException.class, () -> executorOf(script));
-    assertTrue(e.getMessage().contains("stopped at byte"), e.getMessage());
+    // The type byte and the 4 length bytes end at stream position 5, so the declared 12 puts the
+    // end at 13, and the two strings leave the reader at 9.
+    assertEquals(GT.tr("The previous backend message declared its end at byte {0} of the stream,"
+        + " but its reader stopped at byte {1}.", "13", "9"), e.getMessage());
   }
 
   @Test
@@ -361,7 +356,7 @@ class BackendMessageEnvelopeTest {
         .message('S', bytes(cstring("a"), cstring("b")))
         .message('Z', new byte[]{'I'});
 
-    assertNotNull(executorOf(script));
+    assertNotNull(executorOf(script), "the connection must come up");
   }
 
   @Test
@@ -369,7 +364,7 @@ class BackendMessageEnvelopeTest {
     Script script = new Script().messageOfDeclaredLength('Z', 6, new byte[]{'I', 0});
 
     IOException e = assertThrows(IOException.class, () -> executorOf(script));
-    assertTrue(e.getMessage().contains("ReadyForQuery"), e.getMessage());
+    assertEquals(lengthRefusal("ReadyForQuery", 6, 5, 5), e.getMessage());
   }
 
   /**
@@ -398,17 +393,18 @@ class BackendMessageEnvelopeTest {
 
     QueryExecutor executor = executorOf(script);
     SQLException e = runQuery(executor, new CollectingHandler());
-    assertNotNull(e);
+    assertNotNull(e, "the truncated ErrorResponse must still reach the caller");
     ServerErrorMessage message = ((PSQLException) e).getServerErrorMessage();
-    assertNotNull(message);
-    assertEquals("42601", message.getSQLState());
-    assertEquals("boom", message.getMessage());
+    assertNotNull(message, "the error must carry its server fields");
     String query = message.getInternalQuery();
-    assertNotNull(query);
-    assertTrue(query.startsWith("xxx") && query.length() < body.length,
-        "the query field must be kept and truncated");
-
-    assertNull(runQuery(executor, new CollectingHandler()));
+    assertNotNull(query, "the query field must survive the truncation");
+    assertAll(
+        () -> assertEquals("42601", message.getSQLState(), "SQLState field"),
+        () -> assertEquals("boom", message.getMessage(), "message field"),
+        () -> assertTrue(query.startsWith("xxx") && query.length() < body.length,
+            "the query field must be kept and truncated"),
+        () -> assertNull(runQuery(executor, new CollectingHandler()),
+            "the connection must stay usable after the truncation"));
   }
 
   @Test
@@ -420,9 +416,9 @@ class BackendMessageEnvelopeTest {
         .readyForQuery();
 
     CollectingHandler handler = new CollectingHandler();
-    assertNull(runQuery(executorOf(script), handler));
-    assertNotNull(handler.warning);
-    assertEquals("42601", handler.warning.getSQLState());
+    assertNull(runQuery(executorOf(script), handler), "the query must succeed");
+    assertNotNull(handler.warning, "the truncated NoticeResponse must reach the handler");
+    assertEquals("42601", handler.warning.getSQLState(), "SQLState of the warning");
   }
 
   /**
@@ -446,10 +442,10 @@ class BackendMessageEnvelopeTest {
         .readyForQuery();
 
     CollectingHandler handler = new CollectingHandler();
-    assertNull(runQuery(executorOf(script), handler));
-    assertNotNull(handler.warning);
+    assertNull(runQuery(executorOf(script), handler), "the query must succeed");
+    assertNotNull(handler.warning, "the truncated NoticeResponse must reach the handler");
     String message = handler.warning.getMessage();
-    assertNotNull(message);
+    assertNotNull(message, "the warning must carry its message field");
     assertTrue(message.startsWith("xxx"), message);
   }
 
@@ -470,12 +466,16 @@ class BackendMessageEnvelopeTest {
     stream.setMaxResultBuffer("100");
     QueryExecutor executor = new QueryExecutorImpl(stream, 0, new Properties());
     SQLException e = runQuery(executor, new CollectingHandler());
-    assertNotNull(e);
-    assertTrue(e.getMessage().contains("maxResultBuffer"), e.getMessage());
-    assertEquals(PSQLState.COMMUNICATION_ERROR.getState(), e.getSQLState());
-    assertNull(e.getNextException(), "the limit must be the only error reported");
-    assertTrue(stream.isBroken());
-    assertTrue(executor.isClosed());
+    assertNotNull(e, "the row past the limit must be reported");
+    assertAll(
+        // The declared 210 bytes leave 200 for column data, which is what the limit counts.
+        () -> assertEquals(GT.tr("Result set exceeded maxResultBuffer limit. Received:  {0};"
+            + " Current limit: {1}", "200", "100"), e.getMessage()),
+        () -> assertEquals(PSQLState.COMMUNICATION_ERROR.getState(), e.getSQLState(),
+            "SQLState of the refusal"),
+        () -> assertNull(e.getNextException(), "the limit must be the only error reported"),
+        () -> assertTrue(stream.isBroken(), "the stream must be marked broken"),
+        () -> assertTrue(executor.isClosed(), "the executor must report itself closed"));
   }
 
   private static Throwable rootCause(Throwable t) {

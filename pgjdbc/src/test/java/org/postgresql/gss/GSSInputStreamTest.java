@@ -5,17 +5,17 @@
 
 package org.postgresql.gss;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.postgresql.util.GT;
+
 import org.ietf.jgss.GSSContext;
 import org.ietf.jgss.MessageProp;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -24,7 +24,6 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.Arrays;
-import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -34,8 +33,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>{@link GSSInputStream} is installed only on a GSS encrypted connection. The context here is a
  * stub whose unwrap returns the bytes it is given, so the length handling is exercised without a
  * Kerberos realm.</p>
+ *
+ * <p>The driver built each refusal with {@link GT#tr}, and the assertions compare against GT.tr as
+ * well, so they hold in whatever locale the tests run under.</p>
  */
-@Isolated("Uses Locale.setDefault")
 class GSSInputStreamTest {
 
   /**
@@ -45,24 +46,10 @@ class GSSInputStreamTest {
    */
   private static final int MAX_PAYLOAD_SIZE = 16 * 1024 - 4;
 
-  private static Locale defaultLocale;
-
-  /**
-   * We force the root locale because the assertions below match the English text GT.tr returns,
-   * and a translated default locale would fail them. The guard is partial: GT resolves its bundle
-   * once, in a static initializer, so setting the locale here only reaches GT when this class is
-   * the first to load it. What saves the assertions today is that no catalog carries a translation
-   * of the messages they match.
-   */
-  @BeforeAll
-  static void useRootLocale() {
-    defaultLocale = Locale.getDefault();
-    Locale.setDefault(Locale.ROOT);
-  }
-
-  @AfterAll
-  static void restoreLocale() {
-    Locale.setDefault(defaultLocale);
+  /** The refusal {@link GSSInputStream} builds for a declared length outside its range. */
+  private static String refusalFor(int declaredLength) {
+    return GT.tr("Backend declared a GSS packet of {0} bytes, the maximum is {1}.",
+        String.valueOf(declaredLength), String.valueOf(MAX_PAYLOAD_SIZE));
   }
 
   /**
@@ -120,18 +107,24 @@ class GSSInputStreamTest {
 
     IOException e = assertThrows(IOException.class, () -> in.read(new byte[16], 0, 16));
 
-    assertTrue(e.getMessage().contains("GSS packet"), e.getMessage());
-    assertTrue(violated.get(), "the refusal must run the protocol violation callback");
+    assertAll(
+        () -> assertEquals(refusalFor(MAX_PAYLOAD_SIZE + 1), e.getMessage()),
+        () -> assertTrue(violated.get(),
+            "the protocol violation callback must have run before the throw"));
   }
 
+  /** A packet of no bytes carries no token to unwrap, so zero is outside the range as well. */
   @Test
   void rejectsAZeroLengthPacket() {
     AtomicBoolean violated = new AtomicBoolean();
     GSSInputStream in = streamOf(frame(0, 0), violated);
 
-    assertThrows(IOException.class, () -> in.read(new byte[16], 0, 16));
+    IOException e = assertThrows(IOException.class, () -> in.read(new byte[16], 0, 16));
 
-    assertTrue(violated.get());
+    assertAll(
+        () -> assertEquals(refusalFor(0), e.getMessage()),
+        () -> assertTrue(violated.get(),
+            "the protocol violation callback must have run before the throw"));
   }
 
   /** A packet at the payload maximum is sent in full and must not be refused. */
@@ -143,8 +136,9 @@ class GSSInputStreamTest {
     byte[] buffer = new byte[16];
     int read = in.read(buffer, 0, buffer.length);
 
-    assertEquals(buffer.length, read);
-    assertEquals('x', buffer[0]);
-    assertFalse(violated.get());
+    assertAll(
+        () -> assertEquals(buffer.length, read, "bytes returned by the read"),
+        () -> assertEquals('x', buffer[0], "first unwrapped byte"),
+        () -> assertFalse(violated.get(), "the protocol violation callback must not have run"));
   }
 }
