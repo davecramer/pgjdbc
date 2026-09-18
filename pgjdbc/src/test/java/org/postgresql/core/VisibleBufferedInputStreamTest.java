@@ -173,6 +173,25 @@ class VisibleBufferedInputStreamTest {
         () -> assertEquals(buffered % 251, in.read(), "first byte after the skip"));
   }
 
+  /**
+   * A read drains the buffer as a skip does, so the shrink happens on that path as well. The read
+   * takes exactly what is buffered, which leaves the buffer empty without touching the stream.
+   */
+  @Test
+  void shrinksBackWhenAnOutsizedReadIsDrainedByARead() throws IOException {
+    VisibleBufferedInputStream in = new VisibleBufferedInputStream(new Bulk(), INITIAL_SIZE);
+    assertTrue(in.ensureBytes(20000), "the stub must deliver the whole request");
+    int buffered = in.available();
+    byte[] to = new byte[buffered];
+
+    assertEquals(buffered, in.read(to, 0, buffered), "bytes returned by the read");
+
+    assertAll(
+        () -> assertEquals(INITIAL_SIZE, in.getBuffer().length, "buffer length after the read"),
+        () -> assertEquals(0, to[0], "the read must start at stream position 0"),
+        () -> assertEquals(buffered % 251, in.read(), "first byte after the read"));
+  }
+
   @Test
   void compactsWhenThatLeavesRoomToRead() throws IOException {
     VisibleBufferedInputStream in = new VisibleBufferedInputStream(new Bulk(), INITIAL_SIZE);

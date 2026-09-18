@@ -59,6 +59,18 @@ import java.util.Properties;
  */
 class BackendMessageEnvelopeTest {
 
+  /**
+   * The longest ParameterDescription the driver accepts: 4 (length) + 2 (parameter count) + 4 per
+   * parameter, for the 65535 parameters an unsigned int2 count can announce.
+   */
+  private static final int MAX_PARAMETER_DESCRIPTION_LENGTH = 6 + 4 * 0xFFFF;
+
+  /**
+   * The longest copy response the driver accepts: 4 (length) + 1 (overall format) + 2 (field
+   * count) + 2 per field, for the 65535 fields an unsigned int2 count can announce.
+   */
+  private static final int MAX_COPY_RESPONSE_LENGTH = 7 + 2 * 0xFFFF;
+
   /** The refusal {@link PGStream#receiveMessageLength} builds for a length outside its range. */
   private static String lengthRefusal(String messageName, int declared, int min, int max) {
     return GT.tr("Backend declared a {0} message length of {1} bytes, expected {2} to {3} bytes.",
@@ -303,6 +315,24 @@ class BackendMessageEnvelopeTest {
         + " types.", "10", "2"), rootCause(e).getMessage());
   }
 
+  /**
+   * A count of 65535 parameters fills {@link #MAX_PARAMETER_DESCRIPTION_LENGTH} exactly, so one
+   * byte more is refused by the length check, before the count is read.
+   */
+  @Test
+  void rejectsAParameterDescriptionAboveItsMaximumLength() throws Exception {
+    Script script = new Script().startup()
+        .message('1', new byte[0])
+        .messageOfDeclaredLength('t', MAX_PARAMETER_DESCRIPTION_LENGTH + 1,
+            bytes(int2(1), int4(23)))
+        .readyForQuery();
+
+    SQLException e = describeQuery(script);
+    assertNotNull(e, "a ParameterDescription longer than its maximum must be refused");
+    assertEquals(lengthRefusal("ParameterDescription", MAX_PARAMETER_DESCRIPTION_LENGTH + 1, 6,
+        MAX_PARAMETER_DESCRIPTION_LENGTH), rootCause(e).getMessage());
+  }
+
   @Test
   void acceptsACopyOutResponseThatHoldsItsFieldFormats() throws Exception {
     Script script = new Script().startup()
@@ -334,6 +364,24 @@ class BackendMessageEnvelopeTest {
   }
 
   /**
+   * A count of 65535 fields fills {@link #MAX_COPY_RESPONSE_LENGTH} exactly, so one byte more is
+   * refused by the length check, before the count is read.
+   */
+  @Test
+  void rejectsACopyOutResponseAboveItsMaximumLength() throws Exception {
+    Script script = new Script().startup()
+        .messageOfDeclaredLength('H', MAX_COPY_RESPONSE_LENGTH + 1,
+            bytes(new byte[]{0}, int2(1), int2(0)))
+        .readyForQuery();
+
+    QueryExecutor executor = executorOf(script);
+    SQLException e = assertThrows(SQLException.class,
+        () -> executor.startCopy("copy t to stdout", true));
+    assertEquals(lengthRefusal("CopyResponse", MAX_COPY_RESPONSE_LENGTH + 1, 7,
+        MAX_COPY_RESPONSE_LENGTH), rootCause(e).getMessage());
+  }
+
+  /**
    * ParameterStatus is two C strings, so a reader that stops before the declared end is caught
    * only by the position check in {@link PGStream#receiveMessageType()}.
    */
@@ -348,6 +396,41 @@ class BackendMessageEnvelopeTest {
     // end at 13, and the two strings leave the reader at 9.
     assertEquals(GT.tr("The previous backend message declared its end at byte {0} of the stream,"
         + " but its reader stopped at byte {1}.", "13", "9"), e.getMessage());
+  }
+
+  /**
+   * ParameterStatus is buffered whole, so its limit is
+   * {@link PGStream#MAX_BUFFERED_MESSAGE_LENGTH} and one byte more is refused rather than
+   * truncated. A real server sends kilobytes at most.
+   */
+  @Test
+  void rejectsAParameterStatusAboveTheBufferedMaximum() throws Exception {
+    Script script = new Script()
+        .messageOfDeclaredLength('S', PGStream.MAX_BUFFERED_MESSAGE_LENGTH + 1,
+            bytes(cstring("a"), cstring("b")))
+        .message('Z', new byte[]{'I'});
+
+    IOException e = assertThrows(IOException.class, () -> executorOf(script));
+
+    assertEquals(lengthRefusal("ParameterStatus", PGStream.MAX_BUFFERED_MESSAGE_LENGTH + 1, 6,
+        PGStream.MAX_BUFFERED_MESSAGE_LENGTH), e.getMessage());
+  }
+
+  /**
+   * A NotificationResponse is buffered whole as well, and its payload is under 8000 bytes at the
+   * default block size, so the same limit refuses one byte more.
+   */
+  @Test
+  void rejectsANotificationResponseAboveTheBufferedMaximum() throws Exception {
+    Script script = new Script().startup()
+        .messageOfDeclaredLength('A', PGStream.MAX_BUFFERED_MESSAGE_LENGTH + 1,
+            bytes(int4(1), cstring("channel"), cstring("payload")))
+        .readyForQuery();
+
+    SQLException e = runQuery(script);
+    assertNotNull(e, "a NotificationResponse longer than its maximum must be refused");
+    assertEquals(lengthRefusal("NotificationResponse", PGStream.MAX_BUFFERED_MESSAGE_LENGTH + 1, 10,
+        PGStream.MAX_BUFFERED_MESSAGE_LENGTH), rootCause(e).getMessage());
   }
 
   @Test

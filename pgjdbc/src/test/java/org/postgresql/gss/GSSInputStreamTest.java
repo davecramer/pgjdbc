@@ -127,6 +127,23 @@ class GSSInputStreamTest {
             "the protocol violation callback must have run before the throw"));
   }
 
+  /**
+   * The length is read as a signed int4, so the four header bytes can declare a negative one. It
+   * is refused by the same check, which reports the negative length rather than a maximum only.
+   */
+  @Test
+  void rejectsANegativeLengthPacket() {
+    AtomicBoolean violated = new AtomicBoolean();
+    GSSInputStream in = streamOf(frame(-1, 0), violated);
+
+    IOException e = assertThrows(IOException.class, () -> in.read(new byte[16], 0, 16));
+
+    assertAll(
+        () -> assertEquals(refusalFor(-1), e.getMessage()),
+        () -> assertTrue(violated.get(),
+            "the protocol violation callback must have run before the throw"));
+  }
+
   /** A packet at the payload maximum is sent in full and must not be refused. */
   @Test
   void acceptsAPacketAtThePayloadMaximum() throws IOException {
