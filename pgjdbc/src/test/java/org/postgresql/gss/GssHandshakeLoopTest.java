@@ -172,4 +172,25 @@ class GssHandshakeLoopTest {
         () -> assertEquals(tokenRefusalFor(MAX_HANDSHAKE_TOKEN_SIZE + 4), e.getMessage()),
         () -> assertTrue(stream.isBroken(), "the stream must be marked broken"));
   }
+
+  /**
+   * The length is read as a signed int4, so the four script bytes can declare a negative one. It
+   * is refused by the same check, which reports the negative length rather than a maximum only.
+   */
+  @Test
+  @Timeout(value = 30, unit = TimeUnit.SECONDS)
+  void rejectsANegativeHandshakeTokenLength() throws Exception {
+    CannedSocketFactory[] factory = new CannedSocketFactory[1];
+    byte[] script = new byte[]{(byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF};
+    PGStream stream = streamOf(script, factory);
+    GssEncAction action = new GssEncAction(stream, null, "localhost", "test", "postgres", false,
+        false, false);
+
+    IOException e = assertThrows(IOException.class,
+        () -> action.negotiate(neverEstablishedContext()));
+
+    assertAll(
+        () -> assertEquals(tokenRefusalFor(-1), e.getMessage()),
+        () -> assertTrue(stream.isBroken(), "the stream must be marked broken"));
+  }
 }
