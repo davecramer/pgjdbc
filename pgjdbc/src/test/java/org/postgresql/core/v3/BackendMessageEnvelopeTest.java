@@ -405,7 +405,8 @@ class BackendMessageEnvelopeTest {
     assertEquals("boom", message.getMessage());
     String query = message.getInternalQuery();
     assertNotNull(query);
-    assertTrue(query.startsWith("xxx") && query.length() < body.length, "truncated query field");
+    assertTrue(query.startsWith("xxx") && query.length() < body.length,
+        "the query field must be kept and truncated");
 
     assertNull(runQuery(executor, new CollectingHandler()));
   }

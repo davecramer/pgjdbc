@@ -108,7 +108,7 @@ class VisibleBufferedInputStreamTest {
 
     assertTrue(e.getMessage().contains(String.valueOf(VisibleBufferedInputStream.MAX_BUFFER_SIZE)),
         e.getMessage());
-    assertEquals(INITIAL_SIZE, in.getBuffer().length, "nothing should have been allocated");
+    assertEquals(INITIAL_SIZE, in.getBuffer().length, "the buffer must stay at its initial size");
   }
 
   /**

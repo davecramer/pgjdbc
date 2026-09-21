@@ -127,13 +127,13 @@ class GssHandshakeLoopTest {
 
     Exception e = action.negotiate(neverEstablishedContext());
 
-    assertNotNull(e, "the loop must end with an error rather than run on");
+    assertNotNull(e, "negotiate must report an error once the round limit is reached");
     assertTrue(e.getMessage().contains("round trips"), e.getMessage());
     assertEquals(PSQLState.PROTOCOL_VIOLATION.getState(), ((PSQLException) e).getSQLState());
     assertTrue(stream.isBroken());
     // Each round sends a GSSResponse: 1 type byte + 4 length bytes + the 1 byte token.
     assertEquals(MAX_ROUNDS * 6, factory[0].getWritten().length,
-        "the driver must send exactly the capped number of tokens");
+        "the driver must send one token per round and stop at the limit");
   }
 
   @Test
@@ -146,13 +146,13 @@ class GssHandshakeLoopTest {
 
     Exception e = action.negotiate(neverEstablishedContext());
 
-    assertNotNull(e, "the loop must end with an error rather than run on");
+    assertNotNull(e, "negotiate must report an error once the round limit is reached");
     assertTrue(e.getMessage().contains("round trips"), e.getMessage());
     assertEquals(PSQLState.PROTOCOL_VIOLATION.getState(), ((PSQLException) e).getSQLState());
     assertTrue(stream.isBroken());
     // Each round sends 4 length bytes + the 1 byte token, with no message type in front.
     assertEquals(MAX_ROUNDS * 5, factory[0].getWritten().length,
-        "the driver must send exactly the capped number of tokens");
+        "the driver must send one token per round and stop at the limit");
   }
 
   /**
