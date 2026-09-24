@@ -30,17 +30,18 @@ import java.lang.reflect.Proxy;
 import java.util.concurrent.TimeUnit;
 
 /**
- * A zero length GSS token is a valid continuation, so a server that answers every token with
- * another one never ends the handshake unless the client does. Both handshakes stop after
+ * Answers every GSS token the driver sends with another zero length token. A zero length token is a
+ * valid continuation, so the exchange itself never ends the handshake and the client is what has to
+ * stop it: the authentication handshake and the encryption handshake both stop after
  * {@link PGStream#MAX_AUTH_ROUND_TRIPS} rounds with a protocol violation and a broken stream, and
  * {@link GssEncAction} also refuses a token whose declared length is over its limit.
  *
  * <p>Each script holds ten more messages than the limit allows, so it is the limit and not the end
- * of the script that ends the loop. A real GSSContext cannot be built without a Kerberos realm, so
- * these tests pass a stub context straight to the package-private negotiate method.</p>
+ * of the script that ends the loop. A real GSSContext needs a Kerberos realm, so the tests pass a
+ * stub context straight to the package-private negotiate method.</p>
  *
- * <p>The driver built each refusal with {@link GT#tr}, and the assertions compare against GT.tr as
- * well, so they hold in whatever locale the tests run under.</p>
+ * <p>Each assertion builds its expected text with {@link GT#tr}, the call the driver used, so the
+ * tests hold in any locale.</p>
  */
 class GssHandshakeLoopTest {
 
@@ -175,8 +176,9 @@ class GssHandshakeLoopTest {
   }
 
   /**
-   * The length is read as a signed int4, so the four script bytes can declare a negative one. It
-   * is refused by the same check, which reports the negative length rather than a maximum only.
+   * The length is read as a signed int4, so the four script bytes can declare a negative length.
+   * The same check refuses it, and the refusal quotes that negative length rather than only naming
+   * the maximum.
    */
   @Test
   @Timeout(value = 30, unit = TimeUnit.SECONDS)

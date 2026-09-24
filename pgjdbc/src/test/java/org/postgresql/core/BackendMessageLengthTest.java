@@ -25,17 +25,14 @@ import java.io.IOException;
 import java.sql.SQLException;
 
 /**
- * The driver reads each backend message within the length that message declared. That length has
- * to fall inside the range the message type allows, and each DataRow column length has to fit the
- * bytes the message has left. A reader that stops short of the declared end, or runs past it, is
- * caught at the next message type.
+ * Reads backend messages straight from a {@link CannedSocketFactory}, so a test can declare a
+ * length no server would send. Three checks are covered: the declared length has to fall in the
+ * range the message type allows, each DataRow column length has to fit the bytes the message has
+ * left, and a reader that stops short of the declared end or runs past it is caught at the next
+ * message type.
  *
- * <p>Each case sits on one side or the other of one of those limits. The bytes come from a
- * {@link CannedSocketFactory} rather than from a server, so a test can give a length a value no
- * server would send.</p>
- *
- * <p>The driver built each refusal with {@link GT#tr}, and the assertions compare against GT.tr as
- * well, so they hold in whatever locale the tests run under.</p>
+ * <p>Each assertion builds its expected text with {@link GT#tr}, the call the driver used, so the
+ * tests hold in any locale.</p>
  */
 class BackendMessageLengthTest {
 

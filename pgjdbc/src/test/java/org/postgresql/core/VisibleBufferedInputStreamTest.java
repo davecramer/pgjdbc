@@ -24,12 +24,11 @@ import java.io.InputStream;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The read buffer grows to hold what a read asks for, refuses to grow past
- * {@link VisibleBufferedInputStream#MAX_BUFFER_SIZE}, and returns to its initial size once it is
- * drained. Growth and compaction both keep the bytes already buffered.
- *
- * <p>None of the stub streams here ever reaches end of stream, so a read or a scan that failed to
- * stop on its own would run until the {@link Timeout} fired.</p>
+ * Drives {@link VisibleBufferedInputStream} from stub streams that never reach end of stream, so a
+ * read or a scan that failed to stop on its own would run until the {@link Timeout} fired. The
+ * tests cover how the buffer sizes itself: it grows to hold what a read asks for, refuses to grow
+ * past {@link VisibleBufferedInputStream#MAX_BUFFER_SIZE}, and returns to its initial size once it
+ * is drained. Growth and compaction both keep the bytes already buffered.
  */
 class VisibleBufferedInputStreamTest {
 
@@ -37,8 +36,8 @@ class VisibleBufferedInputStreamTest {
 
   /**
    * The refusal {@link VisibleBufferedInputStream#growBuffer} builds for a request it will not
-   * allocate for. The driver built it with {@link GT#tr}, so this goes through GT.tr as well and
-   * holds in whatever locale the tests run under.
+   * allocate for, built here with {@link GT#tr} as the driver builds it, so the tests hold in any
+   * locale.
    */
   private static String refusalFor(long required) {
     return GT.tr("Backend asked for {0} bytes of buffer, the maximum is {1} bytes.",

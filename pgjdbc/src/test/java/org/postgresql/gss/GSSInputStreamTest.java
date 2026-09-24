@@ -27,15 +27,16 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * A GSS packet is refused unless its declared length is between 1 and {@link #MAX_PAYLOAD_SIZE}
- * bytes, and a refusal runs the protocol violation callback before it throws.
+ * Feeds {@link GSSInputStream} packets whose declared length is on one side or the other of the
+ * range it accepts, 1 to {@link #MAX_PAYLOAD_SIZE} bytes, and checks that a length outside that
+ * range is refused and that the refusal runs the protocol violation callback before it throws.
  *
- * <p>{@link GSSInputStream} is installed only on a GSS encrypted connection. The context here is a
- * stub whose unwrap returns the bytes it is given, so the length handling is exercised without a
+ * <p>The stream is installed only on a GSS encrypted connection, so the context here is a stub
+ * whose unwrap returns the bytes it is given; that is enough to reach the length handling without a
  * Kerberos realm.</p>
  *
- * <p>The driver built each refusal with {@link GT#tr}, and the assertions compare against GT.tr as
- * well, so they hold in whatever locale the tests run under.</p>
+ * <p>Each assertion builds its expected text with {@link GT#tr}, the call the driver used, so the
+ * tests hold in any locale.</p>
  */
 class GSSInputStreamTest {
 
@@ -128,8 +129,9 @@ class GSSInputStreamTest {
   }
 
   /**
-   * The length is read as a signed int4, so the four header bytes can declare a negative one. It
-   * is refused by the same check, which reports the negative length rather than a maximum only.
+   * The length is read as a signed int4, so the four header bytes can declare a negative length.
+   * The same check refuses it, and the refusal quotes that negative length rather than only naming
+   * the maximum.
    */
   @Test
   void rejectsANegativeLengthPacket() {

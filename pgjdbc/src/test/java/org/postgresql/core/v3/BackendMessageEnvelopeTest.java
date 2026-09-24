@@ -42,20 +42,23 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * The driver reads each backend message within the length that message declared, no more and no
- * less. It refuses a field or parameter count that the length cannot hold, before it allocates or
- * reads anything from that count. A reader that stops short of the length is caught at the next
- * message type.
+ * Feeds the readers in {@link QueryExecutorImpl} canned backend messages and checks that the driver
+ * refuses any message whose declared length disagrees with what follows, rather than reading past
+ * the message or allocating from a count the length cannot hold. A canned message is what lets a
+ * test give a length or a count a value a server would never send.
  *
- * <p>Two messages are read differently. An ErrorResponse or NoticeResponse longer than
- * {@link PGStream#MAX_BUFFERED_MESSAGE_LENGTH} is truncated rather than refused, and a DataRow past
- * {@code maxResultBuffer} is never read: the driver reports the limit and drops the connection.</p>
+ * <p>A RowDescription, ParameterDescription or CopyOutResponse carries a field count, so its reader
+ * compares that count against the declared length and refuses the message before it reads anything
+ * from the count. A ParameterStatus carries no count, so a body that ends before the declared end
+ * is caught instead by the position check at the next message type. A message the driver buffers
+ * whole is refused above {@link PGStream#MAX_BUFFERED_MESSAGE_LENGTH}.</p>
  *
- * <p>Each test drives the readers in {@link QueryExecutorImpl} from a canned reply, so a test can
- * give a count or a length a value a server would never send.</p>
+ * <p>Two messages are read differently. An ErrorResponse or NoticeResponse past that buffer limit
+ * is truncated rather than refused, and a DataRow past {@code maxResultBuffer} is never read: the
+ * driver reports the limit and drops the connection.</p>
  *
- * <p>The driver built each refusal with {@link GT#tr}, and the assertions compare against GT.tr as
- * well, so they hold in whatever locale the tests run under.</p>
+ * <p>Each assertion builds its expected text with {@link GT#tr}, the call the driver used, so the
+ * tests hold in any locale.</p>
  */
 class BackendMessageEnvelopeTest {
 
@@ -230,10 +233,7 @@ class BackendMessageEnvelopeTest {
     assertNull(runQuery(script));
   }
 
-  /**
-   * Sends a RowDescription whose one field description is a byte short, 18 where 19 are needed, and
-   * expects it to be refused.
-   */
+  /** The one field description is a byte short, 18 bytes where 19 are needed. */
   @Test
   void rejectsARowDescriptionTooShortForItsFieldCount() throws Exception {
     byte[] shortField = new byte[fieldDescription().length - 1];
@@ -250,10 +250,9 @@ class BackendMessageEnvelopeTest {
   }
 
   /**
-   * Sends a RowDescription that declares 1664 fields in a message holding one field description,
-   * and expects it to be refused. 1664 is the most fields a server can send, because PostgreSQL
-   * refuses a target list with more entries, and without the check the reader would take the other
-   * 1663 descriptions from the messages behind it.
+   * The message declares 1664 fields and holds one field description. 1664 is the most fields a
+   * server can send, because PostgreSQL refuses a target list with more entries, and without the
+   * check the reader would take the other 1663 descriptions from the messages behind it.
    */
   @Test
   void rejectsARowDescriptionClaimingFieldsItCannotHold() throws Exception {
@@ -298,10 +297,7 @@ class BackendMessageEnvelopeTest {
     assertNull(describeQuery(script));
   }
 
-  /**
-   * Sends a ParameterDescription whose count claims two type OIDs where the declared 10 bytes hold
-   * the count and a single OID, and expects it to be refused.
-   */
+  /** The count claims two type OIDs where the declared 10 bytes hold the count and one OID. */
   @Test
   void rejectsAParameterDescriptionWhoseCountDoesNotFillIt() throws Exception {
     Script script = new Script().startup()
@@ -346,10 +342,7 @@ class BackendMessageEnvelopeTest {
     assertEquals(1, ((CopyOut) op).getFieldCount(), "field count of the copy operation");
   }
 
-  /**
-   * Sends a CopyOutResponse whose count claims one field format where the declared 11 bytes leave
-   * room for two, and expects it to be refused.
-   */
+  /** The count claims one field format where the declared 11 bytes leave room for two. */
   @Test
   void rejectsACopyOutResponseWhoseFieldCountDoesNotFillIt() throws Exception {
     Script script = new Script().startup()
@@ -505,8 +498,8 @@ class BackendMessageEnvelopeTest {
   }
 
   /**
-   * Truncates a NoticeResponse in the middle of a two byte UTF-8 character and expects the tolerant
-   * decoding to deliver the notice rather than fail the read.
+   * The truncation point falls between the two bytes of one character, and the tolerant decoding
+   * has to deliver the notice anyway rather than fail the read.
    */
   @Test
   void truncatesANoticeResponseThroughAMultibyteCharacter() throws Exception {
@@ -533,8 +526,8 @@ class BackendMessageEnvelopeTest {
   }
 
   /**
-   * A DataRow past maxResultBuffer reports the limit and drops the connection. The row is never
-   * read, so the stream is left in the middle of a message and cannot be used again.
+   * The row is never read, so the stream is left in the middle of a message and cannot be used
+   * again. That is why the limit drops the connection rather than reporting and carrying on.
    */
   @Test
   void dropsTheConnectionPastMaxResultBuffer() throws Exception {

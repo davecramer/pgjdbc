@@ -38,17 +38,18 @@ import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 /**
- * An unauthenticated backend cannot make the driver allocate more than a fixed limit, nor answer
- * more requests than a fixed number. A message past either limit fails the connection with a
- * protocol violation.
+ * Connects a real driver to a hostile server. {@link Backend} binds a loopback port and sends one
+ * message of the kind a server can send before authentication, with a body that need not match its
+ * declared length; the round trip limit is driven through a {@link CannedSocketFactory} instead. No
+ * PostgreSQL server is involved.
  *
- * <p>These are the messages a hostile server can send before authentication, so no PostgreSQL
- * server is involved. {@link Backend} sends one of them over loopback to a real driver, with a body
- * that need not match its declared length. The round trip limit is driven through a
- * {@link CannedSocketFactory} instead.</p>
+ * <p>The two limits under test are what an unauthenticated backend cannot exceed: the driver will
+ * not allocate more than a fixed number of bytes for one message, and will not answer more than a
+ * fixed number of authentication requests. A message past either limit fails the connection with a
+ * protocol violation.</p>
  *
- * <p>The driver built each refusal with {@link GT#tr}, and the assertions compare against GT.tr as
- * well, so they hold in whatever locale the tests run under.</p>
+ * <p>Each assertion builds its expected text with {@link GT#tr}, the call the driver used, so the
+ * tests hold in any locale.</p>
  */
 class MaliciousBackendTest {
 
@@ -272,9 +273,8 @@ class MaliciousBackendTest {
   }
 
   /**
-   * Declares an ErrorResponse of {@link Integer#MAX_VALUE} bytes before authentication, with no
-   * body behind it, and expects the connection to be refused. That is the largest length the 4
-   * length bytes can declare.
+   * {@link Integer#MAX_VALUE} is the largest length the 4 length bytes can declare, and no body
+   * follows it.
    */
   @Test
   @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -284,8 +284,8 @@ class MaliciousBackendTest {
   }
 
   /**
-   * Declares an ErrorResponse of {@link Integer#MIN_VALUE} bytes and expects the connection to be
-   * refused. The body size is the length less 4, which wraps round to a positive two gigabytes.
+   * The body size is the declared {@link Integer#MIN_VALUE} less its own 4 bytes, which wraps round
+   * to a positive two gigabytes.
    */
   @Test
   @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -295,9 +295,8 @@ class MaliciousBackendTest {
   }
 
   /**
-   * Sends a NegotiateProtocolVersion whose option count is 0x7FFFFFFF and expects the connection to
-   * be refused. Without the check that count drives a loop which reads a name and concatenates it
-   * on every iteration.
+   * The option count is 0x7FFFFFFF. Without the check, that count drives a loop which reads an
+   * option name and concatenates it on every one of those iterations.
    */
   @Test
   @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -336,10 +335,9 @@ class MaliciousBackendTest {
   }
 
   /**
-   * Declares an AuthenticationRequest of {@link PGStream#MAX_MESSAGE_LENGTH} bytes and expects the
-   * connection to be refused. The driver accepts that length for a DataRow, but the declared length
-   * sizes the SASL and SSPI reads, so an AuthenticationRequest is held to
-   * {@link PGStream#MAX_SMALL_MESSAGE_LENGTH}.
+   * The declared {@link PGStream#MAX_MESSAGE_LENGTH} is a length the driver accepts for a DataRow.
+   * An AuthenticationRequest is held to {@link PGStream#MAX_SMALL_MESSAGE_LENGTH} instead, because
+   * its declared length sizes the SASL and SSPI reads.
    */
   @Test
   @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -350,9 +348,9 @@ class MaliciousBackendTest {
   }
 
   /**
-   * Declares an ErrorResponse one byte above {@link PGStream#MAX_PRE_AUTH_MESSAGE_LENGTH} and
-   * expects the connection to be refused, though that length is well below
-   * {@link PGStream#MAX_BUFFERED_MESSAGE_LENGTH}.
+   * One byte above {@link PGStream#MAX_PRE_AUTH_MESSAGE_LENGTH} is refused even though it is well
+   * below {@link PGStream#MAX_BUFFERED_MESSAGE_LENGTH}, the limit that applies once the connection
+   * is authenticated.
    */
   @Test
   @Timeout(value = 30, unit = TimeUnit.SECONDS)
